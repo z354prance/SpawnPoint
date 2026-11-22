@@ -182,7 +182,7 @@ def _blocks(cx: int, cz: int, radius: int) -> list[tuple[int, int, int, int]]:
 def _missing(sid: str, b: tuple[int, int, int, int]) -> int:
     """How many chunks of a batch aren't finished on disk yet."""
     from . import flatmap
-    region_dir = os.path.join(dockerctl.server_dir(sid), mapper.level_name(sid), "region")
+    region_dir = mapper.region_dir(sid)
     by_region: dict[tuple[int, int], set] = {}
     for x in range(b[0], b[2] + 1):
         for z in range(b[1], b[3] + 1):

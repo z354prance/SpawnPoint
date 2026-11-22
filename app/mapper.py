@@ -45,25 +45,58 @@ def level_name(sid: str) -> str:
     return "world"
 
 
+_SUB = {"minecraft:overworld": "", "minecraft:the_nether": "DIM-1", "minecraft:the_end": "DIM1"}
+_DIMDIR = {"minecraft:overworld": "overworld", "minecraft:the_nether": "the_nether", "minecraft:the_end": "the_end"}
+
+
+def _region_in(base: str, world: str, dim: str) -> str | None:
+    """A dimension's region folder inside one world folder, or None. Since 26.1 every
+    dimension lives under dimensions/minecraft/<name>; before that the Overworld was the
+    world folder itself and the others were DIM-1 and DIM1."""
+    for d in (os.path.join(base, world, "dimensions", "minecraft", _DIMDIR[dim], "region"),
+              os.path.join(base, world, _SUB[dim], "region")):
+        if os.path.isdir(d):
+            return d
+    return None
+
+
+def region_dir(sid: str, dim: str = "minecraft:overworld") -> str:
+    """Where a dimension's region files are (or will be, for the Overworld)."""
+    base, lvl = dockerctl.server_dir(sid), level_name(sid)
+    if dim != "minecraft:overworld":
+        for world in (lvl + ("_nether" if dim == "minecraft:the_nether" else "_the_end"), lvl):
+            hit = _region_in(base, world, dim)
+            if hit:
+                return hit
+    hit = _region_in(base, lvl, dim)
+    if hit:
+        return hit
+    # Not written yet: the new layout if the world already uses it
+    if os.path.isdir(os.path.join(base, lvl, "dimensions")):
+        return os.path.join(base, lvl, "dimensions", "minecraft", _DIMDIR[dim], "region")
+    return os.path.join(base, lvl, _SUB[dim], "region")
+
+
 def dimensions(sid: str) -> list[dict]:
     """Which maps exist on disk. Vanilla/Forge/Fabric keep the Nether and End inside the
-    world folder (DIM-1, DIM1); Paper/Purpur keep them in world_nether and world_the_end."""
+    world folder (DIM-1, DIM1, or dimensions/minecraft/... since 26.1); Paper/Purpur before
+    26.1 keep them in world_nether and world_the_end."""
     base, lvl = dockerctl.server_dir(sid), level_name(sid)
     out = []
     if os.path.exists(os.path.join(base, lvl, "level.dat")):
         out.append({"id": "overworld", "name": "Overworld", "world": lvl, "dim": "minecraft:overworld", "sorting": 0,
-                    "sky": "#7dabff", "void": "#000000", "ambient": "0.1", "caves": "55", "ceiling": False})
-    for mid, name, folder, sub, dim, sort, sky, void in (
-            ("nether", "Nether", f"{lvl}_nether", "DIM-1", "minecraft:the_nether", 100, "#290000", "#150000"),
-            ("end", "The End", f"{lvl}_the_end", "DIM1", "minecraft:the_end", 200, "#080010", "#080010")):
-        if os.path.isdir(os.path.join(base, folder, sub, "region")):
-            world = folder                      # Paper/Purpur layout
-        elif os.path.isdir(os.path.join(base, lvl, sub, "region")):
-            world = lvl
-        else:
+                    "sky": "#7dabff", "void": "#000000", "ambient": "0.1", "caves": "55", "ceiling": False,
+                    "region": region_dir(sid, "minecraft:overworld")})
+    for mid, name, folder, dim, sort, sky, void in (
+            ("nether", "Nether", f"{lvl}_nether", "minecraft:the_nether", 100, "#290000", "#150000"),
+            ("end", "The End", f"{lvl}_the_end", "minecraft:the_end", 200, "#080010", "#080010")):
+        world, rd = folder, _region_in(base, folder, dim)          # Paper/Purpur layout
+        if not rd:
+            world, rd = lvl, _region_in(base, lvl, dim)
+        if not rd:
             continue
         out.append({"id": mid, "name": name, "world": world, "dim": dim, "sorting": sort, "sky": sky, "void": void,
-                    "ambient": "0.6", "caves": "-10000", "ceiling": mid == "nether"})
+                    "ambient": "0.6", "caves": "-10000", "ceiling": mid == "nether", "region": rd})
     return out
 
 
@@ -180,8 +213,7 @@ def world_changed_at(sid: str) -> float:
     """Newest region file across all dimensions: when the world last changed on disk."""
     base, newest = dockerctl.server_dir(sid), 0.0
     for d in dimensions(sid):
-        sub = {"minecraft:overworld": "", "minecraft:the_nether": "DIM-1", "minecraft:the_end": "DIM1"}[d["dim"]]
-        folder = os.path.join(base, d["world"], sub, "region")
+        folder = d["region"]
         try:
             for e in os.scandir(folder):
                 if e.name.endswith(".mca"):
@@ -193,15 +225,12 @@ def world_changed_at(sid: str) -> float:
 
 
 
-_SUB = {"minecraft:overworld": "", "minecraft:the_nether": "DIM-1", "minecraft:the_end": "DIM1"}
-
-
 def region_files(sid: str) -> dict[str, dict[str, tuple[str, float]]]:
     """{dim: {"x,z": (path, mtime)}} for every region file on disk."""
     out: dict[str, dict] = {}
     base = dockerctl.server_dir(sid)
     for d in dimensions(sid):
-        folder = os.path.join(base, d["world"], _SUB[d["dim"]], "region")
+        folder = d["region"]
         regs = {}
         try:
             for e in os.scandir(folder):

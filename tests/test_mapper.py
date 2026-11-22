@@ -201,6 +201,18 @@ def test_dimensions_vanilla_and_paper_layouts(world):
     assert {d["id"]: d["world"] for d in mapper.dimensions("aoc")}["end"] == "world_the_end"
 
 
+def test_dimensions_26_1_layout(world, tmp_path):
+    import shutil
+    shutil.rmtree(world / "world" / "region")
+    for d in ("overworld", "the_nether", "the_end"):
+        (world / "world" / "dimensions" / "minecraft" / d / "region").mkdir(parents=True)
+    write_region(str(world / "world" / "dimensions" / "minecraft" / "overworld" / "region" / "r.0.0.mca"), {(0, 0): chunk_118(70)})
+    dims = {d["id"]: d["region"] for d in mapper.dimensions("aoc")}
+    assert set(dims) == {"overworld", "nether", "end"} and dims["nether"].endswith("dimensions/minecraft/the_nether/region")
+    assert mapper.region_dir("aoc").endswith("dimensions/minecraft/overworld/region")
+    assert list(mapper.region_files("aoc")["overworld"]) == ["0,0"] and mapper.world_changed_at("aoc") > 0
+
+
 def test_due_only_when_world_changed(world):
     mca = world / "world" / "region" / "r.0.0.mca"
     s = {"id": "aoc", "map": {}}

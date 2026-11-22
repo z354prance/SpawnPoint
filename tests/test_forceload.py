@@ -135,3 +135,16 @@ def test_empty_pause_off_while_generating(monkeypatch, tmp_path):
     pregen._pg("v", stage="background")
     servers.apply_empty_pause(state.get("v"))
     assert "pause-when-empty" not in p.read_text()
+
+
+def test_forceload_finds_26_1_worlds(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    import shutil
+    old = tmp_path / "v" / "world" / "region"
+    new = tmp_path / "v" / "world" / "dimensions" / "minecraft" / "overworld" / "region"
+    shutil.rmtree(old); new.mkdir(parents=True)
+    os.symlink(new, old)                      # the fake game writes to world/region; here that's the new folder
+    monkeypatch.setattr(mapper, "level_name", lambda sid: "world")
+    assert mapper.region_dir("v") == str(new)
+    assert asyncio.run(pregen.forceload_gen(state.get("v"), 60, throttle=False)) is True
+    assert all(pregen._missing("v", b) == 0 for b in pregen._blocks(0, 0, 60))

@@ -216,9 +216,11 @@ def detect(sdir: str) -> dict:
     # around spawn. Treat it as new, so the spawn area is generated before it opens.
     regions = 0
     for d in _dirs(sdir):
-        rd = os.path.join(sdir, d, "region")
-        if os.path.exists(os.path.join(sdir, d, "level.dat")) and os.path.isdir(rd):
-            regions = max(regions, sum(1 for f in os.listdir(rd) if f.endswith(".mca")))
+        if not os.path.exists(os.path.join(sdir, d, "level.dat")):
+            continue
+        for rd in (os.path.join(sdir, d, "region"), os.path.join(sdir, d, "dimensions", "minecraft", "overworld", "region")):
+            if os.path.isdir(rd):
+                regions = max(regions, sum(1 for f in os.listdir(rd) if f.endswith(".mca")))
     out["world_regions"] = regions
     out["played_world"] = regions > FRESH_REGIONS
     return out
