@@ -81,12 +81,7 @@ jobs:
           docker exec gen rcon-cli save-all flush || true
           # ask the game itself what the top block is at a few spots, to check the map against
           for xz in "0 0" "37 -21" "-50 44" "70 70" "-90 -10"; do set -- $xz
-            top=""
-            for y in $(seq 316 -4 -20); do                    # coarse pass from the build limit, then the exact block
-              docker exec gen rcon-cli "execute unless block $1 $y $2 #minecraft:air" | grep -q "passed" && { top=$y; break; }
-            done
-            [ -n "$top" ] || continue
-            for y in $((top+3)) $((top+2)) $((top+1)) $top; do
+            for y in $(seq 230 -1 -20); do                    # every block: treetops and snow can float above gaps
               docker exec gen rcon-cli "execute unless block $1 $y $2 #minecraft:air" | grep -q "passed" || continue
               b=unknown
               for n in snow snow_block powder_snow grass_block dirt podzol stone deepslate granite diorite andesite sand gravel water ice packed_ice blue_ice spruce_leaves oak_leaves birch_leaves short_grass tall_grass fern spruce_log oak_log clay mud coarse_dirt terracotta calcite tuff mycelium moss_block mud red_sand; do
