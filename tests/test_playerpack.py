@@ -13,7 +13,7 @@ from app import config, dockerctl, main, playerpack, proxy, proxyproto, servers,
 
 def _jar(path, fabric_env=None):
     with zipfile.ZipFile(path, "w") as z:
-        z.writestr("META-INF/MANIFEST.MF", "x")
+        z.writestr("META-INF/MANIFEST.MF", str(path))
         if fabric_env:
             z.writestr("fabric.mod.json", json.dumps({"id": "m", "environment": fabric_env}))
 
@@ -96,7 +96,7 @@ def test_automodpack_config(tmp_path):
     cfg = json.loads(cfgp.read_text())
     assert cfg["connection-mode"] == "MAGIC" and cfg["bind-port"] == 25580 and cfg["accept-proxy-protocol"] is False
     assert cfg["other"] == 5 and playerpack.automodpack_port(str(base)) == 25580
-    assert os.listdir(base / "automodpack" / "host-modpack" / "main" / "mods") == []
+    assert os.listdir(base / "automodpack" / "host-modpack" / "main") == []    # nothing extra any more
 
 
 def test_routes(tmp_path, monkeypatch):
@@ -123,6 +123,12 @@ def test_routes(tmp_path, monkeypatch):
     assert f"https://sp.example.com/p/{t}/pack/pack.toml" in z.read("instance.cfg").decode()
     z = zipfile.ZipFile(io.BytesIO(anon.get(f"/p/{t}/pack.zip").content))
     assert "mods/oculus-1.8.jar" in z.namelist() and "READ ME.txt" in z.namelist()
+
+    async def nothing(hashes):
+        return {h: None for h in hashes}
+    monkeypatch.setattr(playerpack, "modrinth_lookup", nothing)
+    z = zipfile.ZipFile(io.BytesIO(anon.get(f"/p/{t}/pack.mrpack").content))
+    assert "modrinth.index.json" in z.namelist() and "overrides/mods/create-1.21.1-6.0.jar" in z.namelist()
     t2 = c.put("/api/servers/a/player-pack", json={"new_link": True}).json()["token"]
     assert t2 != t and anon.get(f"/p/{t}/info").status_code == 404
     c.put("/api/servers/a/player-pack", json={"enabled": False})
@@ -162,3 +168,54 @@ def test_router_sends_ammh_to_automodpack(tmp_path, monkeypatch):
     assert data.startswith(proxyproto.SIG if hasattr(proxyproto, "SIG") else b"\r\n\r\n\x00\r\nQUIT\n")
     used, ip = proxyproto.parse(data)
     assert ip == "127.0.0.1" and data[used:].startswith(b"AMMH") and data.endswith(b"hello")
+
+
+def _with_amp(tmp_path, monkeypatch):
+    base, s = _server(tmp_path, monkeypatch)
+    _jar(base / "mods" / "automodpack-mc1.21.1-neoforge-4.0.7.jar")
+    playerpack.set_settings("a", on=True, sync=True)
+    return base, state.get("a")
+
+
+def test_automodpack_in_every_download(tmp_path, monkeypatch):
+    base, s = _with_amp(tmp_path, monkeypatch)
+    _, idx, fl, _ = playerpack.index(s)
+    assert b"automodpack-mc1.21.1-neoforge-4.0.7.jar" in idx          # Prism's packwiz list
+    # the any-launcher zip is just AutoModpack (it fetches the rest)
+    names = [n for n, _ in playerpack.plain_zip_files(s)]
+    assert names == ["mods/automodpack-mc1.21.1-neoforge-4.0.7.jar", "servers.dat", "READ ME.txt"]
+    # AutoModpack hands out the checked client files and the client-only mods
+    extra = playerpack.client_only_extras(s)
+    assert set(extra) == {"mods/oculus-1.8.jar", "config/jei/jei.toml"}
+    playerpack.before_boot(s)
+    host = base / "automodpack" / "host-modpack" / "main"
+    assert (host / "config" / "jei" / "jei.toml").exists() and (host / "mods" / "oculus-1.8.jar").exists()
+    assert not (host / "config" / "discord.toml").exists()
+    # with sync off: the full zip, and no AutoModpack anywhere
+    playerpack.set_settings("a", sync=False)
+    s = state.get("a")
+    assert "mods/create-1.21.1-6.0.jar" in [n for n, _ in playerpack.plain_zip_files(s)]
+    assert b"automodpack" not in playerpack.index(s)[1]
+
+
+def test_mrpack(tmp_path, monkeypatch):
+    base, s = _with_amp(tmp_path, monkeypatch)
+    create = base / "mods" / "create-1.21.1-6.0.jar"
+    sha1 = hashlib.sha1(create.read_bytes()).hexdigest()
+
+    async def lookup(hashes):
+        return {h: ({"url": "https://cdn.modrinth.com/data/x/create.jar"} if h == sha1 else None) for h in hashes}
+    monkeypatch.setattr(playerpack, "modrinth_lookup", lookup)
+    path = asyncio.run(playerpack.mrpack(s))
+    z = zipfile.ZipFile(path)
+    meta = json.loads(z.read("modrinth.index.json"))
+    assert meta["dependencies"] == {"minecraft": "1.21.1", "neoforge": "21.1.200"}
+    assert [f["path"] for f in meta["files"]] == ["mods/create-1.21.1-6.0.jar"]
+    f = meta["files"][0]
+    assert f["downloads"] == ["https://cdn.modrinth.com/data/x/create.jar"] and f["hashes"]["sha1"] == sha1
+    assert len(f["hashes"]["sha512"]) == 128 and f["fileSize"] == create.stat().st_size
+    inside = set(z.namelist())
+    assert {"overrides/mods/oculus-1.8.jar", "overrides/mods/automodpack-mc1.21.1-neoforge-4.0.7.jar",
+            "overrides/config/jei/jei.toml", "overrides/servers.dat"} <= inside
+    assert "overrides/mods/create-1.21.1-6.0.jar" not in inside and "overrides/config/discord.toml" not in inside
+    assert asyncio.run(playerpack.mrpack(s)) == path                  # unchanged files: same build

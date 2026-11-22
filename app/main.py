@@ -1511,6 +1511,15 @@ async def player_pack_prism(token: str):
                     headers={"Content-Disposition": f'attachment; filename="{name}-prism.zip"'})
 
 
+@app.get("/p/{token}/pack.mrpack")
+async def player_pack_mrpack(token: str):
+    from . import playerpack
+    s = _pack_server(token)
+    path = await playerpack.mrpack(s)
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "-", s["name"]).strip("-") or "server"
+    return FileResponse(path, media_type="application/x-modrinth-modpack+zip", filename=f"{name}.mrpack")
+
+
 @app.get("/p/{token}/pack.zip")
 async def player_pack_zip(token: str):
     from . import playerpack

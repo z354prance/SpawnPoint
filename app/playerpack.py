@@ -130,7 +130,9 @@ def files(s: dict) -> tuple[dict[str, str], list[str]]:
             if f.endswith(".jar.disabled") and f[:-len(".disabled")] in _auto_disabled(s):
                 out[f"mods/{f[:-len('.disabled')]}"] = p          # client-only: off on the server, needed by players
             elif f.endswith(".jar"):
-                if SERVER_ONLY.search(f) or _fabric_server_only(p):
+                if f.lower().startswith("automodpack") and settings(s).get("sync"):
+                    out[f"mods/{f}"] = p                       # players need it too, to stay in sync
+                elif SERVER_ONLY.search(f) or _fabric_server_only(p):
                     left.append(f"{mod_folder}/{f} (only used by the server)")
                 else:
                     out[f"mods/{f}"] = p
@@ -261,10 +263,11 @@ def prism_zip(s: dict, pack_url: str) -> bytes:
 def plain_zip_files(s: dict) -> list[tuple[str, str | bytes]]:
     """(name in zip, file path or bytes) for the any-launcher zip."""
     _, _, fl, _ = index(s)
-    items: list[tuple[str, str | bytes]] = sorted(fl.items())
-    amp = automodpack_jar(s)
-    if settings(s).get("sync") and amp:
-        items.append((f"mods/{os.path.basename(amp)}", amp))
+    amp = automodpack_jar(s) if settings(s).get("sync") else None
+    if amp:                                                   # AutoModpack fetches the rest on first join
+        items: list[tuple[str, str | bytes]] = [(f"mods/{os.path.basename(amp)}", amp)]
+    else:
+        items = sorted(fl.items())
     loader, lver = loader_info(s)
     items.append(("servers.dat", _servers_dat(s.get("name", s["id"]), s.get("hostname", ""))))
     items.append(("READ ME.txt", readme(s, loader, lver).encode()))
@@ -277,11 +280,11 @@ def readme(s: dict, loader: str, lver: str) -> str:
     return "\n".join([
         f"{s.get('name', s['id'])}: files for joining {s.get('hostname', '')}", "",
         f"1. Install Minecraft {s.get('mc_version', '')} with {ld} {lver} in your launcher (or create a profile with it).",
-        "2. Copy everything in this zip (the mods and config folders and the rest) into that profile's game folder.",
-        "   Replace files if asked. servers.dat adds the server to your multiplayer list.",
+        "2. Copy everything in this zip into that profile's game folder, replacing files if asked.",
+        "   servers.dat adds the server to your multiplayer list.",
         f"3. Start the game and join {s.get('hostname', '')}.", "",
-        ("AutoModpack is included: when the server's mods change, it updates yours the next time you join "
-         "(the first time, it asks you to trust the server's certificate)." if sync else
+        ("This zip only has AutoModpack in it. When you join, it asks you to trust the server, downloads the "
+         "server's mods and settings, and restarts the game. After that, joining keeps them up to date." if sync else
          "When the server's mods change, download this zip again."),
         "", "Using Prism Launcher? The Prism download on the same page updates itself every time you play.", ""])
 
@@ -338,27 +341,50 @@ def configure_automodpack(base: str, real_ip: bool, page_url: str, extra: dict[s
             cur.update(want)
             with open(p, "w", encoding="utf-8") as f:
                 json.dump(cur, f, indent=2)
-    host = os.path.join(d, "host-modpack", "main", "mods")
+    _sync_host_files(os.path.join(d, "host-modpack", "main"), extra or {})
+
+
+def _sync_host_files(host: str, extra: dict[str, str]) -> None:
+    """Mirror the extra files into AutoModpack's host folder: hard links where possible
+    (no extra disk space), copies otherwise. Files no longer wanted are removed."""
+    import shutil
     os.makedirs(host, exist_ok=True)
-    keep = set()
-    for rel, src in (extra or {}).items():
-        dst = os.path.join(host, os.path.basename(rel))
-        keep.add(os.path.basename(rel))
-        if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(src):
-            import shutil
-            shutil.copy2(src, dst)
-    for f in os.listdir(host):                                # client-only mods turned back on: not extra any more
-        if f not in keep:
+    for rel, src in extra.items():
+        dst = os.path.join(host, rel)
+        try:
+            st, sd = os.stat(src), (os.stat(dst) if os.path.exists(dst) else None)
+            if sd and (sd.st_ino == st.st_ino or (sd.st_size == st.st_size and int(sd.st_mtime) == int(st.st_mtime))):
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if sd:
+                os.remove(dst)
             try:
-                os.remove(os.path.join(host, f))
+                os.link(src, dst)
             except OSError:
-                pass
+                shutil.copy2(src, dst)
+        except OSError as e:
+            log.info("couldn't give AutoModpack %s: %s", rel, e)
+    want = {os.path.normpath(r) for r in extra}
+    for dirpath, _, filenames in os.walk(host, topdown=False):
+        for f in filenames:
+            rel = os.path.relpath(os.path.join(dirpath, f), host)
+            if os.path.normpath(rel) not in want:
+                try:
+                    os.remove(os.path.join(dirpath, f))
+                except OSError:
+                    pass
+        if dirpath != host and not os.listdir(dirpath):
+            os.rmdir(dirpath)
 
 
 def client_only_extras(s: dict) -> dict[str, str]:
-    """The client-only mods SpawnPoint turned off on the server, for AutoModpack to hand out."""
+    """What AutoModpack should hand out besides what it finds itself (the mods folder and
+    KubeJS): the client-only mods SpawnPoint turned off on the server, and the checked
+    client files (configs, resource packs, shader packs), minus anything that looked like
+    it holds a password. Players' edits to configs are kept (AutoModpack's default)."""
     fl, _ = files(s)
-    return {k: v for k, v in fl.items() if k.startswith("mods/") and v.endswith(".disabled")}
+    return {k: v for k, v in fl.items()
+            if (k.startswith("mods/") and v.endswith(".disabled")) or not (k.startswith("mods/") or k.startswith("kubejs/"))}
 
 
 async def set_sync(sid: str, on: bool) -> str:
@@ -432,4 +458,109 @@ def build_zip(s: dict) -> str:
                 else:
                     z.write(src, name, compress_type=kind)
         os.replace(tmp, out)
+    return out
+
+
+# ------------------------------------------------------------------ Modrinth App (.mrpack)
+_mr_cache: dict[str, dict | None] = {}                       # sha1 -> {"url": ...} or None (not on Modrinth)
+MR_HOSTS = ("https://cdn.modrinth.com/",)
+
+
+def _sha1(path: str) -> str:
+    st = os.stat(path)
+    key = ("sha1", path, st.st_size, st.st_mtime_ns)
+    if key not in _sha_cache:
+        h = hashlib.sha1()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        _sha_cache[key] = h.hexdigest()
+    return _sha_cache[key]
+
+
+def _sha512(path: str) -> str:
+    st = os.stat(path)
+    key = ("sha512", path, st.st_size, st.st_mtime_ns)
+    if key not in _sha_cache:
+        h = hashlib.sha512()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        _sha_cache[key] = h.hexdigest()
+    return _sha_cache[key]
+
+
+async def modrinth_lookup(hashes: list[str]) -> dict[str, dict | None]:
+    """Which files are on Modrinth, by checksum, so the Modrinth App can download those
+    from Modrinth itself instead of from this server."""
+    from . import catalog
+    import httpx
+    todo = [h for h in hashes if h not in _mr_cache]
+    if todo:
+        try:
+            async with httpx.AsyncClient(timeout=20, headers={"User-Agent": "SpawnPoint (github.com/z354prance/SpawnPoint)"}) as c:
+                r = await c.post(f"{catalog.MR}/version_files", json={"hashes": todo, "algorithm": "sha1"})
+                r.raise_for_status()
+                found = r.json()
+            for h in todo:
+                v = found.get(h)
+                f = next((x for x in (v or {}).get("files", []) if x.get("hashes", {}).get("sha1") == h), None)
+                _mr_cache[h] = {"url": f["url"]} if f and f.get("url", "").startswith(MR_HOSTS) else None
+        except Exception as e:                                 # Modrinth unreachable: everything goes in the file
+            log.info("Modrinth lookup failed, packing all mods: %s", e)
+            return {h: _mr_cache.get(h) for h in hashes}
+    return {h: _mr_cache.get(h) for h in hashes}
+
+
+async def mrpack(s: dict) -> str:
+    """A Modrinth App modpack file. Mods published on Modrinth are listed by their
+    Modrinth download (so they come from Modrinth); everything else is inside it."""
+    import asyncio
+    _, _, fl, _ = await asyncio.to_thread(index, s)
+    mods = {k: v for k, v in fl.items() if k.startswith("mods/")}
+    sha1s = {k: await asyncio.to_thread(_sha1, v) for k, v in mods.items()}
+    found = await modrinth_lookup(sorted(set(sha1s.values())))
+    loader, lver = await asyncio.to_thread(loader_info, s)
+    deps = {"minecraft": s.get("mc_version", "")}
+    key = {"neoforge": "neoforge", "forge": "forge", "fabric": "fabric-loader", "quilt": "quilt-loader"}.get(loader)
+    if key and lver:
+        deps[key] = lver
+    listed, inside = [], []
+    for rel, src in sorted(fl.items()):
+        hit = found.get(sha1s.get(rel, ""))
+        if hit:
+            listed.append({"path": rel, "hashes": {"sha1": sha1s[rel], "sha512": await asyncio.to_thread(_sha512, src)},
+                           "env": {"client": "required", "server": "unsupported"},
+                           "downloads": [hit["url"]], "fileSize": os.path.getsize(src)})
+        else:
+            inside.append((rel, src))
+    name = s.get("name", s["id"])
+    meta = {"formatVersion": 1, "game": "minecraft", "versionId": time.strftime("%Y.%m.%d.%H%M", time.gmtime()),
+            "name": name, "summary": f"Everything needed to join {s.get('hostname', '')}",
+            "files": listed, "dependencies": deps}
+    h = hashlib.sha256(json.dumps(meta["files"], sort_keys=True).encode())
+    for rel, src in inside:
+        h.update(f"{rel}:{os.path.getsize(src)}:{int(os.path.getmtime(src))}".encode())
+    h.update(json.dumps(deps, sort_keys=True).encode())
+    d = os.path.join(config.STATE_DIR, "player-packs")
+    os.makedirs(d, exist_ok=True)
+    out = os.path.join(d, f"{s['id']}-mr-{h.hexdigest()[:16]}.mrpack")
+    if os.path.exists(out):
+        return out
+    def build():
+        with _lock:
+            for f in os.listdir(d):
+                if f.startswith(s["id"] + "-mr-"):
+                    try:
+                        os.remove(os.path.join(d, f))
+                    except OSError:
+                        pass
+            tmp = out + ".part"
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr("modrinth.index.json", json.dumps(meta, indent=2))
+                for rel, src in inside:
+                    z.write(src, f"overrides/{rel}", compress_type=zipfile.ZIP_STORED if rel.endswith(".jar") else zipfile.ZIP_DEFLATED)
+                z.writestr("overrides/servers.dat", _servers_dat(name, s.get("hostname", "")))
+            os.replace(tmp, out)
+    await asyncio.to_thread(build)
     return out

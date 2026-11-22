@@ -46,7 +46,19 @@
       <li>Download the instance below and drag the file into Prism's window (or Add Instance → Import).</li>
       <li>Press Play. The first start downloads the mods, which takes a few minutes. The server is already in your multiplayer list.</li>
     </ol>
+    <p class="note" id="prismsync"></p>
     <a class="btn" id="prism" href="#">Download for Prism Launcher</a>
+  </section>
+
+  <section class="way">
+    <h2>Modrinth App</h2>
+    <p id="mrsync">One file with everything. Mods published on Modrinth download from Modrinth; the rest is inside.</p>
+    <ol>
+      <li>Install the <a href="https://modrinth.com/app" rel="noopener">Modrinth App</a> and sign in with your Microsoft account.</li>
+      <li>Download the file below and open it with the Modrinth App (or drag it onto the app's window).</li>
+      <li>Press Play, then join from the multiplayer list.</li>
+    </ol>
+    <a class="btn" id="mrpack" href="#">Download for the Modrinth App</a>
   </section>
 
   <section class="way">
@@ -76,13 +88,18 @@ fetch(`${base}/info`).then((r) => r.ok ? r.json() : Promise.reject()).then((i) =
   }
   $("prism").href = `${base}/prism.zip`;
   $("zip").href = `${base}/pack.zip`;
-  $("size").textContent = `about ${Math.max(1, Math.round(i.size / 2 ** 20))} MB`;
+  $("mrpack").href = `${base}/pack.mrpack`;
+  const amp = "AutoModpack is included: when the server's mods change, it updates yours the next time you join (the first time, it asks you to trust the server).";
+  $("mrsync").textContent = "One file with everything. Mods published on Modrinth download from Modrinth; the rest is inside. " +
+    (i.sync ? amp : "When the server's mods change, download it again.");
+  if (i.sync) $("prismsync").textContent = "AutoModpack is included too, so mods also update if you join from somewhere other than Play.";
+  $("size").textContent = i.sync ? "" : `about ${Math.max(1, Math.round(i.size / 2 ** 20))} MB`;
   $("anysteps").innerHTML = [
     `In your launcher, make a profile for Minecraft ${esc(i.mc_version)}${ld ? ` with ${esc(ld)} ${esc(i.loader_version || "")}` : ""}.`,
     "Unzip the download into that profile's game folder (the one with the mods folder), replacing files if asked.",
-    `Start the game and join <b>${esc(i.address)}</b>.`].map((x) => `<li>${x}</li>`).join("");
+    `Start the game and join <b>${esc(i.address)}</b>.${i.sync ? " Accept AutoModpack's prompt and let it restart the game, then join again." : ""}`].map((x) => `<li>${x}</li>`).join("");
   $("anysync").textContent = i.sync
-    ? "The mods and settings as a zip, with AutoModpack included: after this one install, it updates your mods by itself whenever you join and the server's have changed (the first time, it asks you to trust the server)."
+    ? "A tiny zip with just AutoModpack in it. The first time you join, it asks you to trust the server, downloads the server's mods and settings, and restarts the game. After that, joining keeps them up to date."
     : "The mods and settings as a zip, to copy into your game folder. When the server's mods change, download it again.";
 }).catch(() => { $("facts").textContent = "This link isn't active any more. Ask the server's owner for a new one."; });
 </script>

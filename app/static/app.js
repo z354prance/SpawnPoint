@@ -1086,7 +1086,7 @@ async function drawPlayerPack(sid, p) {
   const guess = location.origin.startsWith("http://localhost") || /^http:\/\/\d/.test(location.origin) ? "" : location.origin;
   box.innerHTML = `<h4 style="margin-top:0">Player pack</h4>
     <label class="row" style="color:var(--ink)"><input type="checkbox" id="ppon" ${p.enabled ? "checked" : ""}> Give players a download page for this server's mods</label>
-    <p class="sub">The page offers a Prism Launcher instance that updates itself every time they play, and a zip for any other launcher. Anyone with the link can download, nothing else.</p>
+    <p class="sub">The page offers a Prism Launcher instance that updates itself every time they play, a file for the Modrinth App, and a zip for any other launcher. Anyone with the link can download, nothing else.</p>
     <label for="ppbase">Address players open SpawnPoint at</label>
     <input id="ppbase" class="mono" value="${esc(p.base_url || guess)}" placeholder="https://spawnpoint.example.com">
     <p class="sub">The page and Prism's updates are fetched from here, so it has to be reachable from the internet (a Pangolin HTTP resource, for example). Only the /p/ link is public; the rest still needs a sign-in.</p>
@@ -1095,8 +1095,8 @@ async function drawPlayerPack(sid, p) {
       ${p.page ? `<button class="small" id="ppcopy">Copy</button>` : ""}<button class="small" id="ppnew">New link</button></div>
       <p class="sub">${p.mods} mods and ${p.count - p.mods} other files, ${mb(p.size)}.${p.left_out.length ? ` Left out: ${p.left_out.length}.` : ""}</p>
       ${p.left_out.length ? `<details><summary class="sub">What's left out, and why</summary><ul class="sub" style="margin:6px 0 0 18px">${p.left_out.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
-      <label class="row" style="color:var(--ink);margin-top:12px"><input type="checkbox" id="ppsync" ${p.sync ? "checked" : ""}> Keep the zip's mods in sync with AutoModpack</label>
-      <p class="sub">Adds the AutoModpack mod to the server and the zip. When this server's mods change, players' copies update the next time they join. It goes through the same address and port as the game.</p>` : ""}
+      <label class="row" style="color:var(--ink);margin-top:12px"><input type="checkbox" id="ppsync" ${p.sync ? "checked" : ""}> Keep players' mods in sync with AutoModpack</label>
+      <p class="sub">Adds the AutoModpack mod to the server and to all three downloads. When this server's mods change, players' copies update the next time they join, whichever launcher they use. It goes through the same address and port as the game.</p>` : ""}
     <p class="sub" style="color:var(--warn)">Mods belong to their authors and many licences don't allow sharing them elsewhere. Keep the link to your own players. For a public modpack server, point people to the official pack instead.</p>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px">${p.page ? `<a class="btn small" href="${esc(p.page)}" target="_blank" rel="noopener">Open the page</a>` : ""}<button class="primary small" id="ppsave">Save</button></div>`;
   const save = async (extra = {}, msg = "Player pack saved") => {
