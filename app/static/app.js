@@ -809,11 +809,24 @@ function tabConsole(sid) {
     });
   }
   es = new EventSource(`/api/servers/${sid}/console`);
+  // The same message again and again (a mod complaining about every chunk) folds into one
+  // line with a count, so the rest of the log stays readable.
+  const body = (l) => l.replace(/^\[\d\d:\d\d:\d\d\]\s*/, "").replace(/^\S+T\S+\s+/, "");
+  let last = null;
   es.onmessage = (e) => {
     const stick = con.scrollTop + con.clientHeight >= con.scrollHeight - 30;
-    const d = document.createElement("div"), l = e.data;
+    const l = e.data, b = body(l);
+    if (last && last.body === b && last.el.isConnected) {
+      last.n++; last.count.textContent = `×${last.n}`; last.stamp.textContent = l.slice(0, l.length - b.length);
+      if (stick) con.scrollTop = con.scrollHeight;
+      return;
+    }
+    const d = document.createElement("div");
     d.className = /ERROR|Exception/.test(l) ? "e" : /WARN/.test(l) ? "w" : "";
-    d.textContent = l; con.appendChild(d);
+    const stamp = document.createElement("span"), count = document.createElement("span");
+    stamp.textContent = l.slice(0, l.length - b.length); count.className = "rep";
+    d.append(stamp, document.createTextNode(b), count); con.appendChild(d);
+    last = { body: b, el: d, n: 1, count, stamp };
     while (con.childElementCount > 1500) con.firstChild.remove();
     if (stick) con.scrollTop = con.scrollHeight;
   };
@@ -822,7 +835,7 @@ function tabConsole(sid) {
     e.preventDefault(); const cmd = $("#cmd").value.trim(); if (!cmd) return;
     $("#cmd").value = "";
     const r = await act(() => api(`/servers/${sid}/command`, { method: "POST", body: { command: cmd } }));
-    const d = document.createElement("div"); d.className = "c"; d.textContent = `> ${cmd}${r?.output ? "\n" + r.output : ""}`;
+    const d = document.createElement("div"); d.className = "c"; d.textContent = `> ${cmd}${r?.output ? "\n" + r.output : ""}`; last = null;
     con.appendChild(d); con.scrollTop = con.scrollHeight;
   };
 }

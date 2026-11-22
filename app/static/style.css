@@ -315,3 +315,5 @@ td select { height: 34px; width: auto; }
 .steps li.done::marker { content: "✓  "; color: var(--ok, #22C55E); }
 .steps li.now { color: var(--ink); font-weight: 600; }
 ul.tight { margin: 4px 0; padding-left: 18px; }
+.console .rep { margin-left: 8px; padding: 0 6px; border-radius: 99px; background: var(--soft); color: var(--ink); font-size: 11px; }
+.console .rep:empty { display: none; }
