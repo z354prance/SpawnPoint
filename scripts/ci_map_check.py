@@ -66,6 +66,27 @@ for f in sorted(glob.glob(os.path.join(rd, "*.mca")))[:1]:
             seen_b[v] = seen_b.get(v, 0) + 1
         for v in got[0].reshape(-1).tolist():
             seen_n[v] = seen_n.get(v, 0) + 1
+if os.path.exists("/tmp/mapci/truth.txt"):
+    for line in open("/tmp/mapci/truth.txt"):
+        x, y, z, b = line.split()
+        x, y, z = int(x), int(y), int(z)
+        f = os.path.join(rd, f"r.{x >> 9}.{z >> 9}.mca")
+        for lx, lz, nbt in flatmap.read_chunks(f):
+            if lx == (x >> 4) & 31 and lz == (z >> 4) & 31:
+                names, h, _ = flatmap.chunk_columns(nbt, "overworld")
+                secs = flatmap._sections(nbt)
+                col = []
+                sy = y >> 4
+                if sy in secs:
+                    pal, idx = flatmap._decode(secs[sy])
+                    cube = np.array(pal, dtype=object)[idx].reshape(16, 16, 16)
+                    col = [cube[(y - k) & 15, z & 15, x & 15] for k in range(4) if (y - k) >> 4 == sy]
+                    # where in this section is the game's block?
+                    hits = np.argwhere(cube == "minecraft:" + b)[:3].tolist()
+                else:
+                    hits = "section missing"
+                print(f"TRUTH {x} {y} {z}: game says {b}; map says {names[z & 15, x & 15]} at y={h[z & 15, x & 15]}; "
+                      f"decoded column from y down {col}; '{b}' found in section at (y,z,x) {hits}; palette {secs[sy][0][:12] if sy in secs else ''} bits {secs[sy][1][0] if sy in secs and secs[sy][1] else None} longs {len(secs[sy][1][1]) if sy in secs and secs[sy][1] else None}")
 print("raw biome palette entries:", sorted(raw_b)[:12])
 print("biomes:", {k: (n, flatmap.biome_colors(k)[0]) for k, n in sorted(seen_b.items(), key=lambda kv: -kv[1])[:8]})
 print("top blocks:", {k: (n, pal_dbg.color(k), pal_dbg.tinted.get(k)) for k, n in sorted(seen_n.items(), key=lambda kv: -kv[1])[:8]})

@@ -79,6 +79,17 @@ jobs:
           done; done
           prev=0; for i in $(seq 1 40); do sleep 15; docker exec gen rcon-cli save-all >/dev/null || true; n=$(find /tmp/mapci/servers/demo/world -name '*.mca' -printf '%s\n' | awk '{s+=$1} END {print s+0}'); echo "region bytes $n"; [ "$n" = "$prev" ] && break; prev=$n; done
           docker exec gen rcon-cli save-all flush || true
+          # ask the game itself what the top block is at a few spots, to check the map against
+          for xz in "0 0" "37 -21" "-50 44" "70 70" "-90 -10"; do set -- $xz
+            for y in $(seq 140 -1 -20); do
+              docker exec gen rcon-cli "execute unless block $1 $y $2 #minecraft:air" | grep -q "passed" || continue
+              b=unknown
+              for n in snow snow_block powder_snow grass_block dirt podzol stone deepslate granite diorite andesite sand gravel water ice packed_ice blue_ice spruce_leaves oak_leaves birch_leaves short_grass tall_grass fern spruce_log oak_log clay mud coarse_dirt terracotta calcite tuff; do
+                docker exec gen rcon-cli "execute if block $1 $y $2 minecraft:$n" | grep -q "passed" && { b=$n; break; }
+              done
+              echo "$1 $y $2 $b" | tee -a /tmp/mapci/truth.txt; break
+            done
+          done
           docker stop -t 60 gen
           sudo chown -R $(id -u) /tmp/mapci
           find /tmp/mapci/servers/demo/world -name '*.mca' | head
