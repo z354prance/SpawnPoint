@@ -1,0 +1,40 @@
+# Real-world check with the actual itzg/minecraft-server image: a Modrinth modpack plus an
+# extra mod pinned through MODRINTH_PROJECTS (how SpawnPoint adds Chunky, spark and the
+# real-IP mod to packs). The extra mod must be loaded and must survive restarts.
+name: itzg-addons
+on:
+  workflow_dispatch:
+jobs:
+  addon-survives-restart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Resolve pack and Chunky versions
+        id: v
+        run: |
+          PV=$(curl -fsS "https://api.modrinth.com/v2/project/adrenaserver/version" | jq -r '[.[] | select(.loaders | index("fabric"))][0]')
+          MC=$(echo "$PV" | jq -r '.game_versions[0]'); PACKV=$(echo "$PV" | jq -r '.id')
+          CV=$(curl -fsS "https://api.modrinth.com/v2/project/chunky/version?loaders=%5B%22fabric%22%5D&game_versions=%5B%22$MC%22%5D" | jq -r '.[0].id')
+          echo "mc=$MC pack=$PACKV chunky=$CV"
+          echo "mc=$MC" >> $GITHUB_OUTPUT; echo "pack=$PACKV" >> $GITHUB_OUTPUT; echo "chunky=$CV" >> $GITHUB_OUTPUT
+      - name: Start pack + pinned Chunky
+        run: |
+          JAVA=java21; case "${{ steps.v.outputs.mc }}" in 26*) JAVA=java25;; esac
+          mkdir -p /tmp/data
+          docker run -d --name mc -v /tmp/data:/data -e EULA=TRUE -e TYPE=MODRINTH \
+            -e MODRINTH_MODPACK=adrenaserver -e MODRINTH_VERSION=${{ steps.v.outputs.pack }} \
+            -e MODRINTH_PROJECTS=chunky:${{ steps.v.outputs.chunky }} -e MODRINTH_LOADER=fabric \
+            -e MODRINTH_DOWNLOAD_DEPENDENCIES=required -e MEMORY=2G itzg/minecraft-server:$JAVA
+      - name: Check (3 starts)
+        run: |
+          check() {  # $1 = how many "Done" lines mean this start has finished
+            for i in $(seq 1 120); do [ "$(docker logs mc 2>&1 | grep -c 'Done (')" -ge "$1" ] && break; sleep 5; done
+            [ "$(docker logs mc 2>&1 | grep -c 'Done (')" -ge "$1" ] || { docker logs mc | tail -60; exit 1; }
+            sleep 3
+            echo "--- mods with chunky:"; ls /tmp/data/mods | grep -i chunky || { echo "CHUNKY JAR MISSING"; exit 1; }
+            out=$(docker exec mc rcon-cli chunky); echo "rcon chunky -> $out"
+            echo "$out" | grep -qi "unknown" && { echo "CHUNKY NOT LOADED"; exit 1; } || true
+          }
+          check 1
+          for n in 2 3; do echo "=== restart $n"; docker restart -t 60 mc >/dev/null; check $n; done
+          echo "Chunky stayed installed and loaded across restarts"

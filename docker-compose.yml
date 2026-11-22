@@ -1,0 +1,35 @@
+# SpawnPoint: Minecraft server host in one container.
+#
+#   cp .env.example .env      # then set ADMIN_PASSWORD and BASE_DOMAIN
+#   docker compose up -d
+#
+# The dashboard is on http://<this-machine>:8090. Everything lives in ./data next to this file.
+services:
+  spawnpoint:
+    image: ghcr.io/z354prance/spawnpoint:latest
+    # To build from this folder instead of pulling the image, comment out `image:` and use:
+    # build: .
+    container_name: spawnpoint
+    restart: unless-stopped
+    # Needed for SpawnPoint's private Docker engine, which runs each Minecraft server in
+    # its own container inside this one (so they don't clutter your host).
+    privileged: true
+    # Big modpacks need time to save their worlds when SpawnPoint stops.
+    stop_grace_period: 3m
+    ports:
+      - "8090:8090"      # dashboard: keep this on your local network, or put it behind HTTPS
+      - "25565:25565"    # Minecraft: every server shares this port
+      - "19132-19141:19132-19141/udp"   # Bedrock players: one port per server that has them turned on
+    environment:
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      BASE_DOMAIN: ${BASE_DOMAIN:-mc.example.com}
+      TZ: ${TZ:-UTC}
+      CF_API_KEY: ${CF_API_KEY:-}
+      # Optional, see the README's Configuration section:
+      # RAM_POOL_GB: "24"
+      # RESERVED_CORE_GROUPS: "2"
+      # TRUSTED_PROXIES: "192.168.1.5/32"
+    volumes:
+      - ./data/servers:/servers          # worlds, mods, configs (fast local disk)
+      - ./data/backups:/backups          # backups (any disk; keep the .restic-password file with them)
+      - ./data/engine:/var/lib/docker    # the private Docker engine (fast local disk, not a network share)

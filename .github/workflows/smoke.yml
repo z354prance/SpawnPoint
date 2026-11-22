@@ -1,0 +1,80 @@
+# Builds the image and starts it the way Unraid does (privileged, engine storage on a
+# bind mount), then checks that the private Docker engine, web UI and router come up.
+name: smoke
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt pytest playwright && python -m playwright install --with-deps chromium
+      - name: Install restic (same version as the image)
+        run: |
+          V=$(grep -oP 'ARG RESTIC_VERSION=\K[0-9.]+' Dockerfile)
+          curl -fsSL -o /tmp/restic.bz2 https://github.com/restic/restic/releases/download/v$V/restic_${V}_linux_amd64.bz2
+          bunzip2 -c /tmp/restic.bz2 | sudo tee /usr/local/bin/restic > /dev/null
+          sudo chmod +x /usr/local/bin/restic && restic version
+      - run: pytest -q
+      - run: python tests/ui/typing_check.py
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t spawnpoint:test .
+      - name: Image size
+        run: |
+          docker image ls spawnpoint:test --format 'SpawnPoint image: {{.Size}}'
+          docker history spawnpoint:test --format '{{.Size}}\t{{.CreatedBy}}' | grep -v '^0B' | cut -c1-140
+          docker pull -q itzg/minecraft-server:java21 >/dev/null && docker image ls itzg/minecraft-server:java21 --format 'Minecraft runtime image (java21): {{.Size}}'
+      - name: Run like Unraid
+        run: |
+          mkdir -p /tmp/sp/engine /tmp/sp/servers /tmp/sp/backups
+          docker run -d --name sp --privileged --stop-timeout=180 \
+            -p 8090:8090 -p 25565:25565 \
+            -v /tmp/sp/engine:/var/lib/docker -v /tmp/sp/servers:/servers -v /tmp/sp/backups:/backups \
+            -e ADMIN_PASSWORD=test spawnpoint:test
+          for i in $(seq 1 60); do curl -fs localhost:8090/ >/dev/null && break; sleep 2; done
+          echo "----- container logs -----"; docker logs sp
+          curl -fs localhost:8090/ >/dev/null || { echo "web UI did not come up"; exit 1; }
+          docker exec sp docker info -f 'engine ok: {{.ServerVersion}} {{.Driver}} cgroup v{{.CgroupVersion}}'
+          docker exec sp docker network ls
+          docker exec sp docker run --rm --network mcnet busybox echo "inner container ok" || docker exec sp docker run --rm hello-world
+      - name: Engine log on failure
+        if: failure()
+        run: docker exec sp cat /var/log/dockerd.log || docker logs sp
+  map:
+    # Draws a real vanilla world with SpawnPoint's flat map (needs internet for the
+    # vanilla client jar's block colours, which CI has).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Generate a small vanilla world
+        run: |
+          mkdir -p /tmp/mapci/servers/demo
+          docker run -d --name gen -e EULA=TRUE -e TYPE=VANILLA -e VERSION=1.21.1 -e ONLINE_MODE=false -e MEMORY=2G \
+            -e SPAWN_PROTECTION=0 -v /tmp/mapci/servers/demo:/data itzg/minecraft-server:java21
+          for i in $(seq 1 120); do docker logs gen 2>&1 | grep -q 'Done (' && break; sleep 3; done
+          docker logs gen 2>&1 | tail -5
+          # generate a 384-block square around spawn so the map has real terrain to draw
+          # (forceload takes at most 256 chunks per command)
+          for x in -192 -64 64; do for z in -192 -64 64; do
+            docker exec gen rcon-cli "forceload add $x $z $((x+127)) $((z+127))" || true
+          done; done
+          prev=0; for i in $(seq 1 40); do sleep 15; docker exec gen rcon-cli save-all >/dev/null || true; n=$(du -sb /tmp/mapci/servers/demo/world/region | cut -f1); echo "region bytes $n"; [ "$n" = "$prev" ] && break; prev=$n; done
+          docker exec gen rcon-cli save-all flush || true
+          docker stop -t 60 gen
+          sudo chown -R $(id -u) /tmp/mapci
+          ls /tmp/mapci/servers/demo/world/region
+      - name: Draw and serve the map
+        run: python scripts/ci_map_check.py

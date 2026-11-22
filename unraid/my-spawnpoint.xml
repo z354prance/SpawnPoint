@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>spawnpoint</Name>
+  <Repository>ghcr.io/z354prance/spawnpoint:latest</Repository>
+  <Registry>https://github.com/z354prance/SpawnPoint/pkgs/container/spawnpoint</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>true</Privileged>
+  <Support/>
+  <Project>https://github.com/z354prance/SpawnPoint</Project>
+  <Overview>SpawnPoint: a self-hosted, MintServers-style Minecraft host. One-click modpacks (Modrinth, CurseForge, FTB), single-mod installs, a built-in router so every server gets its own address on port 25565 (atm10.mc.example.com), wake-on-join, automatic RAM/CPU tuning and background world pre-generation. Each Minecraft server runs in SpawnPoint's own private Docker engine, so only this one container appears in your Docker tab. Privileged is required for that.</Overview>
+  <Category>GameServers: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8090]/</WebUI>
+  <TemplateURL/>
+  <Icon>file:///boot/config/plugins/dockerMan/icons/spawnpoint.png</Icon>
+  <ExtraParams>--stop-timeout=180 -p 19132-19141:19132-19141/udp</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Image is private on GHCR: Unraid needs docker login ghcr.io (a classic token with read:packages).</Requires>
+  <Config Name="Minecraft port" Target="25565" Default="25565" Mode="tcp" Description="All Minecraft players come in here. Point Pangolin's raw TCP resource at UnraidIP:this port." Type="Port" Display="always" Required="true" Mask="false">25565</Config>
+  <Config Name="Web UI" Target="8090" Default="8090" Mode="tcp" Description="Panel. Put a Pangolin HTTPS resource with auth in front of it if you want it outside your LAN." Type="Port" Display="always" Required="true" Mask="false">8090</Config>
+  <Config Name="Server data (NVMe)" Target="/servers" Default="/mnt/cache/appdata/spawnpoint/servers" Mode="rw" Description="Worlds, mods and configs. Use the /mnt/cache/... path (your NVMe cache), not /mnt/user/..., and never the array." Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/spawnpoint/servers</Config>
+  <Config Name="Backups" Target="/backups" Default="/mnt/user/backups/minecraft" Mode="rw" Description="Backup archives. The array is fine here." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/backups/minecraft</Config>
+  <Config Name="Engine storage (NVMe pool path)" Target="/var/lib/docker" Default="/mnt/cache/appdata/spawnpoint/engine" Mode="rw" Description="SpawnPoint's private Docker engine (game images and containers). Must be a /mnt/cache/... path, NOT /mnt/user/..." Type="Path" Display="always" Required="true" Mask="false">/mnt/cache/appdata/spawnpoint/engine</Config>
+  <Config Name="Admin password" Target="ADMIN_PASSWORD" Default="" Mode="" Description="Password for the web UI." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Base domain" Target="BASE_DOMAIN" Default="mc.example.com" Mode="" Description="Servers get NAME.this-domain. Needs a wildcard DNS record such as *.mc pointing at this machine (or your VPS)." Type="Variable" Display="always" Required="true" Mask="false">mc.example.com</Config>
+  <Config Name="CurseForge API key" Target="CF_API_KEY" Default="" Mode="" Description="Optional. Free key from console.curseforge.com; enables CurseForge modpacks." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="Minecraft RAM pool (GB)" Target="RAM_POOL_GB" Default="" Mode="" Description="Total RAM all Minecraft servers may use together. Leave blank to use three quarters of this machine's RAM (at most 96 GB)." Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Reserved core groups" Target="RESERVED_CORE_GROUPS" Default="2" Mode="" Description="Core groups kept for Unraid and other apps. A group is 2 cores with their threads (one L3 slice on a 7F72). Never more than a third of the CPU is held back." Type="Variable" Display="advanced" Required="true" Mask="false">2</Config>
+  <Config Name="Burst core groups" Target="BURST_GROUPS" Default="3" Mode="" Description="Extra core groups lent to a server while it pre-generates its world." Type="Variable" Display="advanced" Required="true" Mask="false">3</Config>
+  <Config Name="Max servers borrowing cores" Target="MAX_BURST_SERVERS" Default="2" Mode="" Description="How many servers can pre-generate on borrowed cores at once." Type="Variable" Display="advanced" Required="true" Mask="false">2</Config>
+  <Config Name="Spawn pre-gen radius" Target="SPAWN_PREGEN_RADIUS" Default="750" Mode="" Description="Blocks generated before a new server opens." Type="Variable" Display="advanced" Required="true" Mask="false">750</Config>
+  <Config Name="Full pre-gen radius" Target="FULL_PREGEN_RADIUS" Default="5000" Mode="" Description="Blocks generated in the background after opening." Type="Variable" Display="advanced" Required="true" Mask="false">5000</Config>
+  <Config Name="Pause pre-gen above (ms/tick)" Target="MSPT_PAUSE" Default="40" Mode="" Description="Background pre-generation pauses when tick time goes above this." Type="Variable" Display="advanced" Required="true" Mask="false">40</Config>
+  <Config Name="Resume pre-gen below (ms/tick)" Target="MSPT_RESUME" Default="30" Mode="" Description="...and resumes when it drops below this." Type="Variable" Display="advanced" Required="true" Mask="false">30</Config>
+  <Config Name="World maps" Target="MAP_ENABLED" Default="true" Mode="" Description="Draw a top-down map of every server's world, on spare CPU cores. false = only the generation view." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Map update interval (minutes)" Target="MAP_INTERVAL_MIN" Default="10" Mode="" Description="How often a changed world is redrawn at most. Only changed chunks are redrawn." Type="Variable" Display="advanced" Required="false" Mask="false">10</Config>
+  <Config Name="Maps drawn at once" Target="MAP_PARALLEL" Default="2" Mode="" Description="How many servers' maps can be drawn at the same time. Each one borrows 2 spare core groups while it runs." Type="Variable" Display="advanced" Required="false" Mask="false">2</Config>
+  <Config Name="Docker network" Target="DOCKER_NETWORK" Default="mcnet" Mode="" Description="Private network SpawnPoint creates for its server containers. Leave as is." Type="Variable" Display="advanced" Required="true" Mask="false">mcnet</Config>
+  <Config Name="Hide servers from Docker tab" Target="ISOLATED_DOCKER" Default="true" Mode="" Description="true = private engine inside SpawnPoint (needs Privileged). false = use Unraid's Docker (map /var/run/docker.sock, add --pid=host --cap-add=SYS_NICE); servers then show as mc-* containers." Type="Variable" Display="advanced" Required="true" Mask="false">true</Config>
+  <Config Name="Wake on join" Target="AUTO_WAKE" Default="true" Mode="" Description="A player joining a stopped or sleeping server starts it." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Timezone" Target="TZ" Default="America/Chicago" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">America/Chicago</Config>
+</Container>

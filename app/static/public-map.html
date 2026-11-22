@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>World map</title>
+<link rel="icon" href="/static/brand/favicon.svg">
+<style>
+  :root { color-scheme: dark; --bg: #121418; --ink: #E9ECF1; --mute: #8B93A1; --card: rgba(24,27,32,.86); --line: #2A2F38; --acc: #FF9D4A; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; display: block; }
+  canvas:active { cursor: grabbing; }
+  .bar { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; gap: 10px; align-items: center; pointer-events: none; }
+  .pill { pointer-events: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; backdrop-filter: blur(8px); }
+  h1 { font-size: 15px; margin: 0; font-weight: 650; }
+  .sub { color: var(--mute); font-size: 12px; }
+  select { background: #1C1F25; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; }
+  .coords { position: fixed; left: 12px; bottom: 12px; font: 12px ui-monospace, monospace; }
+  .grow { flex: 1; }
+  .msg { position: fixed; inset: 0; display: grid; place-items: center; color: var(--mute); pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="map" tabindex="0" aria-label="World map. Drag to move, scroll to zoom."></canvas>
+<div class="bar">
+  <div class="pill"><h1 id="name">World map</h1><div class="sub" id="status"></div></div>
+  <div class="grow"></div>
+  <div class="pill" id="dimbox" hidden><label for="dim" class="sub" style="margin-right:6px">Dimension</label><select id="dim"></select></div>
+</div>
+<div class="pill coords" id="coords">–</div>
+<div class="msg" id="msg"></div>
+<script>
+"use strict";
+const token = location.pathname.split("/")[2];
+const base = `/m/${encodeURIComponent(token)}`;
+const cv = document.getElementById("map"), x = cv.getContext("2d");
+const NAMES = { overworld: "Overworld", nether: "Nether", end: "The End" };
+const COLORS = ["#5B8DEF", "#F5A524", "#22C55E", "#E879F9", "#38BDF8", "#F87171", "#A3E635"];
+let info = null, dim = "overworld", players = [], view = null;
+const tiles = new Map(), faces = new Map();
+const MAX_PPB = 4;
+
+function ago(t) { const s = Date.now() / 1000 - t; return s < 90 ? "just now" : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 172800 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`; }
+function img(url, cache) {
+  let im = cache.get(url);
+  if (!im) { im = new Image(); im.onload = () => requestAnimationFrame(draw); im.onerror = () => { im.bad = true; }; im.src = url; cache.set(url, im); }
+  return im.complete && !im.bad && im.naturalWidth ? im : null;
+}
+function bounds() {
+  const t = info?.dims?.[dim] || [];
+  let b = null;
+  for (const [tx, tz] of t) b = b ? [Math.min(b[0], tx * 512), Math.min(b[1], tz * 512), Math.max(b[2], tx * 512 + 512), Math.max(b[3], tz * 512 + 512)] : [tx * 512, tz * 512, tx * 512 + 512, tz * 512 + 512];
+  for (const p of players.filter((p) => p.dim === dim)) b = b ? [Math.min(b[0], p.x - 64), Math.min(b[1], p.z - 64), Math.max(b[2], p.x + 64), Math.max(b[3], p.z + 64)] : [p.x - 256, p.z - 256, p.x + 256, p.z + 256];
+  return b || [-512, -512, 512, 512];
+}
+function fit() {
+  const b = bounds(), w = cv.clientWidth, h = cv.clientHeight;
+  const ppb = Math.min(MAX_PPB, Math.min(w / (b[2] - b[0]), h / (b[3] - b[1])) * 0.9);
+  const sp = dim === "overworld" && info.spawn;
+  view = { x: sp ? info.spawn.x : (b[0] + b[2]) / 2, z: sp ? info.spawn.z : (b[1] + b[3]) / 2, ppb: Math.max(ppb, 0.02), min: ppb * 0.6 };
+}
+function draw() {
+  if (!info || !view) return;
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  x.setTransform(1, 0, 0, 1, 0, 0); x.fillStyle = "#121418"; x.fillRect(0, 0, cv.width, cv.height);
+  const k = view.ppb * dpr, ox = (w / 2 - view.x * view.ppb) * dpr, oz = (h / 2 - view.z * view.ppb) * dpr;
+  const lod = view.ppb < 0.3 ? "small" : "full";
+  x.imageSmoothingEnabled = view.ppb < 1;
+  for (const [tx, tz, v] of info.dims[dim] || []) {
+    const sx = ox + tx * 512 * k, sz = oz + tz * 512 * k, size = 512 * k;
+    if (sx > cv.width || sz > cv.height || sx + size < 0 || sz + size < 0) continue;
+    const im = img(`${base}/tile/${dim}/${lod}/${tx}.${tz}.png?v=${v}`, tiles) || img(`${base}/tile/${dim}/${lod === "full" ? "small" : "full"}/${tx}.${tz}.png?v=${v}`, tiles);
+    if (im) x.drawImage(im, sx, sz, size + 0.5, size + 0.5);
+  }
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const at = (wx, wz) => [w / 2 + (wx - view.x) * view.ppb, h / 2 + (wz - view.z) * view.ppb];
+  if (dim === "overworld" && info.spawn) {
+    const [hx, hz] = at(info.spawn.x + 0.5, info.spawn.z + 0.5);
+    x.fillStyle = "rgba(22,25,29,.85)"; x.strokeStyle = "rgba(255,255,255,.9)"; x.lineWidth = 1.5;
+    x.beginPath(); x.roundRect(hx - 11, hz - 11, 22, 22, 6); x.fill(); x.stroke();
+    x.beginPath(); x.moveTo(hx - 6, hz - 0.5); x.lineTo(hx, hz - 6); x.lineTo(hx + 6, hz - 0.5);
+    x.moveTo(hx - 4.5, hz - 1.5); x.lineTo(hx - 4.5, hz + 5.5); x.lineTo(hx + 4.5, hz + 5.5); x.lineTo(hx + 4.5, hz - 1.5);
+    x.strokeStyle = "#FF9D4A"; x.lineWidth = 1.6; x.lineJoin = "round"; x.stroke();
+  }
+  x.font = "600 12px system-ui, sans-serif"; x.textBaseline = "middle";
+  for (const p of players.filter((p) => p.dim === dim)) {
+    const [px, pz] = at(p.x, p.z);
+    const face = img(`${base}/head/${encodeURIComponent(p.name)}.png`, faces);
+    x.save(); x.beginPath(); x.roundRect(px - 10, pz - 10, 20, 20, 4); x.clip();
+    if (face) { x.imageSmoothingEnabled = false; x.drawImage(face, px - 10, pz - 10, 20, 20); }
+    else { x.fillStyle = COLORS[[...p.name].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % COLORS.length]; x.fillRect(px - 10, pz - 10, 20, 20);
+      x.fillStyle = "#fff"; x.textAlign = "center"; x.fillText(p.name[0].toUpperCase(), px, pz + 0.5); }
+    x.restore(); x.strokeStyle = "#fff"; x.lineWidth = 2; x.beginPath(); x.roundRect(px - 10, pz - 10, 20, 20, 4); x.stroke();
+    x.textAlign = "left"; x.lineWidth = 3; x.strokeStyle = "rgba(0,0,0,.7)"; x.fillStyle = "#fff"; x.strokeText(p.name, px + 15, pz); x.fillText(p.name, px + 15, pz);
+  }
+  const has = (info.dims[dim] || []).length;
+  document.getElementById("msg").textContent = has ? "" : "This map hasn't been drawn yet.";
+}
+// moving around
+let drag = null;
+cv.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", (e) => {
+  if (view) { const r = cv.getBoundingClientRect(); const wx = view.x + (e.clientX - r.left - r.width / 2) / view.ppb, wz = view.z + (e.clientY - r.top - r.height / 2) / view.ppb;
+    document.getElementById("coords").textContent = `${Math.floor(wx)}, ~, ${Math.floor(wz)}`; }
+  if (!drag || !view) return;
+  view.x -= (e.clientX - drag.x) / view.ppb; view.z -= (e.clientY - drag.y) / view.ppb; drag = { x: e.clientX, y: e.clientY }; draw();
+});
+const stop = () => (drag = null); cv.addEventListener("pointerup", stop); cv.addEventListener("pointercancel", stop);
+cv.addEventListener("wheel", (e) => {
+  e.preventDefault(); if (!view) return;
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2;
+  const wx = view.x + mx / view.ppb, wz = view.z + my / view.ppb;
+  view.ppb = Math.min(MAX_PPB, Math.max(view.min, view.ppb * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
+  view.x = wx - mx / view.ppb; view.z = wz - my / view.ppb; draw();
+}, { passive: false });
+cv.addEventListener("dblclick", () => { fit(); draw(); });
+cv.addEventListener("keydown", (e) => {
+  if (!view) return; const s = 60 / view.ppb;
+  const m = { ArrowLeft: [-s, 0], ArrowRight: [s, 0], ArrowUp: [0, -s], ArrowDown: [0, s] }[e.key];
+  if (m) { view.x += m[0]; view.z += m[1]; } else if (e.key === "+" || e.key === "=") view.ppb = Math.min(MAX_PPB, view.ppb * 1.25);
+  else if (e.key === "-") view.ppb = Math.max(view.min, view.ppb / 1.25); else return;
+  e.preventDefault(); draw();
+});
+addEventListener("resize", draw);
+document.getElementById("dim").onchange = (e) => { dim = e.target.value; fit(); draw(); };
+// data
+async function load() {
+  const r = await fetch(`${base}/info`); if (!r.ok) { document.getElementById("msg").textContent = "This map isn't shared any more."; info = null; return; }
+  const first = !info; info = await r.json();
+  document.title = `${info.name}: world map`; document.getElementById("name").textContent = info.name;
+  document.getElementById("status").textContent = `${info.online ? "Online" : "Offline"}${info.updated ? `, map updated ${ago(info.updated)}` : ""}`;
+  const dims = ["overworld", "nether", "end"].filter((d) => (info.dims[d] || []).length);
+  document.getElementById("dimbox").hidden = dims.length < 2;
+  document.getElementById("dim").innerHTML = dims.map((d) => `<option value="${d}" ${d === dim ? "selected" : ""}>${NAMES[d]}</option>`).join("");
+  if (first) { if (dims.length && !dims.includes(dim)) dim = dims[0]; fit(); }
+  draw();
+}
+async function poll() {
+  if (!info || !info.players || !info.online) { players = []; return; }
+  const r = await fetch(`${base}/players`).catch(() => null);
+  if (r && r.ok) { players = await r.json(); draw(); }
+}
+load().then(poll);
+setInterval(load, 60000); setInterval(poll, 4000);
+</script>
+</body>
+</html>
