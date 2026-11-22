@@ -32,8 +32,18 @@ for f in sorted(glob.glob(os.path.join(rd, "*.mca"))):
         print("chunk keys:", sorted(nbt), "| DataVersion", nbt.get("DataVersion"), "| Status", lvl.get("Status"),
               "| Heightmaps", sorted((lvl.get("Heightmaps") or {})), "| section keys",
               sorted((lvl.get("sections") or [{}])[0]) if lvl.get("sections") else None)
+        for sec in lvl.get("sections") or []:
+            bs = sec.get("block_states") or {}
+            if len(bs.get("palette") or []) > 1:
+                print("section", sec.get("Y"), "block_states keys", sorted(bs), "| palette sample", repr(bs["palette"][:3])[:300],
+                      "| data", type(bs.get("data")).__name__, len(bs.get("data") if bs.get("data") is not None else []))
+                break
+        print("heightmap MOTION_BLOCKING", type((lvl.get("Heightmaps") or {}).get("MOTION_BLOCKING")).__name__,
+              len((lvl.get("Heightmaps") or {}).get("MOTION_BLOCKING") or []))
         why2 = {}
         got = flatmap.chunk_columns(nbt, "overworld", None, why2)
+        if got:
+            print("names sample", got[0][0][:4].tolist(), "heights", got[1][0][:4].tolist())
         print("columns:", "ok" if got else f"none {why2}")
         break
     print("unreadable chunks in", os.path.basename(f), why)
