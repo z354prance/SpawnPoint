@@ -172,6 +172,11 @@ def explain(sid: str, log_lines: list[str], since: float | None = None, mods_dir
     if "OutOfMemoryError" in src:
         return done("The server ran out of memory", "Java ran out of heap space.", "",
                     "Give it more memory in Settings, or check for a mod or machine that keeps loading chunks.")
+    if not text and "Done (" in log and "RCON running" not in log:
+        return done("The server started, but SpawnPoint couldn't reach its console",
+                    "The game finished starting, but its remote console (RCON) never came up, so SpawnPoint couldn't tell it was ready.",
+                    "", "SpawnPoint turns RCON back on in server.properties by itself; if this keeps happening, check that file for "
+                    "enable-rcon=true and that no mod or plugin turns it off.")
     if text or "Exception" in log:
         exc = _exception(src)
         desc = re.search(r"^Description: (.+)$", text, re.M)

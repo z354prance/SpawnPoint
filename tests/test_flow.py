@@ -318,3 +318,19 @@ def test_modded_installs_without_a_throwaway_start(tmp_path, monkeypatch):
     assert boots[1][2] == perf.memory_plan("fabric", s["mod_count"])[2]   # sized from the real mod count before starting
     assert "chunky.jar" in s["helpers_added"]
     assert {"Downloading", "Generating spawn"} <= seen
+
+
+def test_rcon_is_put_back_on(tmp_path, monkeypatch):
+    """A pack's server.properties can switch RCON off; SpawnPoint turns it back on before starting."""
+    monkeypatch.setattr(dockerctl, "server_dir", lambda sid: str(tmp_path / sid))
+    state.put({"id": "r", "name": "r", "rcon_password": "pw123", "pregen": {"stage": "done"}})
+    (tmp_path / "r").mkdir()
+    (tmp_path / "r" / "server.properties").write_text("motd=x\nenable-rcon=false\nrcon.password=\n")
+    assert servers.ensure_rcon(state.get("r")) is True
+    props = dict(servers.read_properties("r"))
+    assert props["enable-rcon"] == "true" and props["rcon.password"] == "pw123" and props["rcon.port"] == "25575"
+    assert props["motd"] == "x"
+    assert servers.ensure_rcon(state.get("r")) is False
+    env = dockerctl.build_env({**state.get("r"), "java_tag": "java21", "memory": {"init_gb": 1, "max_gb": 2},
+                               "kind": "fabric", "mc_version": "1.21.1", "props_from_env": True}, 2)
+    assert env["SKIP_SERVER_PROPERTIES"] == "false" and env["RCON_PASSWORD"] == "pw123"

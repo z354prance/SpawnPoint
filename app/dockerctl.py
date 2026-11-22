@@ -178,6 +178,10 @@ def build_env(s: dict, worker_threads: int) -> dict:
         "ENABLE_AUTOPAUSE": "false",
         "SKIP_SERVER_PROPERTIES": "true",  # we own server.properties after first boot
     }
+    if s.get("props_from_env"):
+        # Something rewrites this server's server.properties on every start and turns RCON
+        # off: let the image set the RCON lines each start (it only touches set variables).
+        env["SKIP_SERVER_PROPERTIES"] = "false"
     kind = s["kind"]
     if kind == "modrinth":
         env.update(TYPE="MODRINTH", MODRINTH_MODPACK=s["pack"]["project"])

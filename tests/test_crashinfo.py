@@ -85,3 +85,10 @@ def test_mixin_failure_and_nothing_to_say(tmp_path, monkeypatch):
     ex = crashinfo.explain("s", ["Mixin apply for mod betterclouds failed betterclouds.mixins.json:WorldRendererMixin"], mods_dir=mods)
     assert ex["title"] == "A mod failed to load" and ex["mod"] == "betterclouds"
     assert crashinfo.explain("s", ["[Server thread/INFO]: Stopping server"], mods_dir=mods)["title"] == ""
+
+
+def test_started_without_console(tmp_path, monkeypatch):
+    mods = _server(tmp_path, monkeypatch)
+    ex = crashinfo.explain("s", ['[Server thread/INFO]: Done (1.363s)! For help, type "help"',
+                                 "mc-server-runner	Failed to stop using rcon-cli"], mods_dir=mods)
+    assert ex["title"].startswith("The server started, but SpawnPoint couldn't reach its console")

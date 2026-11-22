@@ -280,6 +280,22 @@ def _ram_check(s: dict) -> str | None:
 PREGEN_ACTIVE = ("pending", "spawn", "background")
 
 
+def ensure_rcon(s: dict) -> bool:
+    """SpawnPoint talks to every server over RCON, so make sure server.properties has it on
+    with our password. A pack's own server.properties (or one edited by hand) can turn it
+    off, and then the server starts but SpawnPoint can't see it. True if anything changed."""
+    sid = s["id"]
+    if not os.path.exists(os.path.join(dockerctl.server_dir(sid), "server.properties")):
+        return False                                  # the image writes it, with RCON, on the first start
+    props = dict(read_properties(sid))
+    want = {"enable-rcon": "true", "rcon.password": s["rcon_password"], "rcon.port": "25575"}
+    change = {k: v for k, v in want.items() if props.get(k, "").strip() != v}
+    if change:
+        log.info("[%s] turning RCON back on in server.properties (%s)", sid, ", ".join(sorted(change)))
+        write_properties(sid, change)
+    return bool(change)
+
+
 def apply_empty_pause(s: dict) -> None:
     """Since 1.21.2 the game stops ticking when nobody's online (pause-when-empty-seconds),
     which also stops pre-generation. Turn it off while pre-gen runs and put the server's
@@ -305,6 +321,7 @@ async def _boot(s: dict, burst: bool = False) -> None:
         state.update(s["id"], empty_pause_restore="60")      # the game's default, once pre-gen is done
         s = state.get(s["id"])
     if not s.get("first_boot"):
+        await asyncio.to_thread(ensure_rcon, s)
         await asyncio.to_thread(apply_empty_pause, s)
         # Container is stopped here, so it's safe to (re)apply the real-IP setup.
         from . import packs
@@ -357,6 +374,7 @@ async def boot_ready(sid: str, timeout: float, burst: bool = True, attempts: int
     on its own 4-8. go_online gives them back once the server has settled."""
     from . import clientmods, javafix
     tried_java: set[str] = set()
+    rcon_fixed = False
     for _ in range(attempts):
         s = state.get(sid)
         t0 = time.time()
@@ -368,6 +386,15 @@ async def boot_ready(sid: str, timeout: float, burst: bool = True, attempts: int
             log.info("[%s] started in %ss on %s threads", sid, took, n)
             return True
         lines = await asyncio.to_thread(clientmods.crash_lines, sid)
+        if any("Done (" in l for l in lines) and await asyncio.to_thread(ensure_rcon, state.get(sid)):
+            # It started, but its console was switched off. Fixed in the file; if something
+            # (a pack installer) switches it off again at the next start, have the image set
+            # it on every start instead.
+            if rcon_fixed:
+                state.update(sid, props_from_env=True)
+            rcon_fixed = True
+            set_phase(sid, state.get(sid).get("phase", "starting"), "The server's console (RCON) was off: turned it on and retrying")
+            continue
         fixed = await asyncio.to_thread(clientmods.autofix, s, lines)
         if fixed:
             names = ", ".join(f["name"] for f in fixed)
