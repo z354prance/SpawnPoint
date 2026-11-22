@@ -20,8 +20,14 @@ print("spawn:", mapper.spawn_point("demo"))
 rd = mapper.region_dir("demo")
 print("region folder:", rd, sorted(os.listdir(rd))[:6])
 for f in sorted(glob.glob(os.path.join(rd, "*.mca"))):
-    why = {}
+    why, hist = {}, {}
     for lx, lz, nbt in flatmap.read_chunks(f, why):
+        st = nbt.get("Level", nbt).get("Status")
+        hist[st] = hist.get(st, 0) + 1
+    print("statuses in", os.path.basename(f), hist)
+    for lx, lz, nbt in flatmap.read_chunks(f, why):
+        if (nbt.get("Level", nbt).get("Status") or "") in flatmap._EARLY:
+            continue
         lvl = nbt.get("Level", nbt)
         print("chunk keys:", sorted(nbt), "| DataVersion", nbt.get("DataVersion"), "| Status", lvl.get("Status"),
               "| Heightmaps", sorted((lvl.get("Heightmaps") or {})), "| section keys",
