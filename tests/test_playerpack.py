@@ -206,16 +206,33 @@ def test_mrpack(tmp_path, monkeypatch):
     async def lookup(hashes):
         return {h: ({"url": "https://cdn.modrinth.com/data/x/create.jar"} if h == sha1 else None) for h in hashes}
     monkeypatch.setattr(playerpack, "modrinth_lookup", lookup)
+    # AutoModpack running: just AutoModpack, with the loader for the Modrinth App to set up
+    z = zipfile.ZipFile(asyncio.run(playerpack.mrpack(s)))
+    meta = json.loads(z.read("modrinth.index.json"))
+    assert meta["dependencies"] == {"minecraft": "1.21.1", "neoforge": "21.1.200"} and meta["files"] == []
+    assert sorted(z.namelist()) == ["modrinth.index.json", "overrides/mods/automodpack-mc1.21.1-neoforge-4.0.7.jar", "overrides/servers.dat"]
+    # without AutoModpack: everything, with Modrinth's own downloads where they exist
+    playerpack.set_settings("a", sync=False)
+    s = state.get("a")
     path = asyncio.run(playerpack.mrpack(s))
     z = zipfile.ZipFile(path)
     meta = json.loads(z.read("modrinth.index.json"))
-    assert meta["dependencies"] == {"minecraft": "1.21.1", "neoforge": "21.1.200"}
     assert [f["path"] for f in meta["files"]] == ["mods/create-1.21.1-6.0.jar"]
     f = meta["files"][0]
     assert f["downloads"] == ["https://cdn.modrinth.com/data/x/create.jar"] and f["hashes"]["sha1"] == sha1
     assert len(f["hashes"]["sha512"]) == 128 and f["fileSize"] == create.stat().st_size
     inside = set(z.namelist())
-    assert {"overrides/mods/oculus-1.8.jar", "overrides/mods/automodpack-mc1.21.1-neoforge-4.0.7.jar",
-            "overrides/config/jei/jei.toml", "overrides/servers.dat"} <= inside
+    assert {"overrides/mods/oculus-1.8.jar", "overrides/config/jei/jei.toml", "overrides/servers.dat"} <= inside
+    assert not any("automodpack" in n for n in inside)
     assert "overrides/mods/create-1.21.1-6.0.jar" not in inside and "overrides/config/discord.toml" not in inside
     assert asyncio.run(playerpack.mrpack(s)) == path                  # unchanged files: same build
+
+
+def test_sync_waits_for_the_jar(tmp_path, monkeypatch):
+    """Turned on but not downloaded yet (needs a restart): full downloads, and the card says so."""
+    _, s = _server(tmp_path, monkeypatch)
+    playerpack.set_settings("a", on=True, sync=True)
+    s = state.get("a")
+    assert not playerpack.sync_active(s)
+    assert "mods/create-1.21.1-6.0.jar" in [n for n, _ in playerpack.plain_zip_files(s)]
+    assert main._pack_view("a")["sync_pending"] is True

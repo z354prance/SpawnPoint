@@ -58,6 +58,7 @@
       <li>Download the file below and open it with the Modrinth App (or drag it onto the app's window).</li>
       <li>Press Play, then join from the multiplayer list.</li>
     </ol>
+    <p class="note" id="mrnote"></p>
     <a class="btn" id="mrpack" href="#">Download for the Modrinth App</a>
   </section>
 
@@ -89,9 +90,10 @@ fetch(`${base}/info`).then((r) => r.ok ? r.json() : Promise.reject()).then((i) =
   $("prism").href = `${base}/prism.zip`;
   $("zip").href = `${base}/pack.zip`;
   $("mrpack").href = `${base}/pack.mrpack`;
-  const amp = "AutoModpack is included: when the server's mods change, it updates yours the next time you join (the first time, it asks you to trust the server).";
-  $("mrsync").textContent = "One file with everything. Mods published on Modrinth download from Modrinth; the rest is inside. " +
-    (i.sync ? amp : "When the server's mods change, download it again.");
+  $("mrsync").textContent = i.sync
+    ? "A tiny file with just AutoModpack. The Modrinth App sets up the right Minecraft and loader, and the first time you join, AutoModpack asks you to trust the server, downloads its mods and settings, and restarts the game. After that, joining keeps them up to date."
+    : "One file with everything. Mods published on Modrinth download from Modrinth; the rest is inside. When the server's mods change, download it again.";
+  if (i.sync) $("mrnote").textContent = "The first join ends with AutoModpack restarting the game. Join again and you're in.";
   if (i.sync) $("prismsync").textContent = "AutoModpack is included too, so mods also update if you join from somewhere other than Play.";
   $("size").textContent = i.sync ? "" : `about ${Math.max(1, Math.round(i.size / 2 ** 20))} MB`;
   $("anysteps").innerHTML = [

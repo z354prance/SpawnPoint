@@ -1420,7 +1420,8 @@ def _pack_view(sid: str) -> dict:
     out = {"enabled": playerpack.enabled(s), "token": pp.get("token"), "sync": bool(pp.get("sync")),
            "base_url": pp.get("base_url", ""), "page": playerpack.page_url(s),
            "modded": s.get("loader") not in ("vanilla", "paper", "purpur", None, ""),
-           "automodpack": bool(playerpack.automodpack_jar(s))}
+           "automodpack": bool(playerpack.automodpack_jar(s)),
+           "sync_pending": bool(pp.get("sync")) and not playerpack.automodpack_jar(s)}
     if out["enabled"]:
         fl, left = playerpack.files(s)
         out.update(count=len(fl), mods=sum(1 for k in fl if k.startswith("mods/")), left_out=left[:200],
@@ -1476,8 +1477,7 @@ async def player_pack_info(token: str):
     _, _, fl, _ = await asyncio.to_thread(playerpack.index, s)
     return {"name": s["name"], "address": s.get("hostname"), "mc_version": s.get("mc_version"), "loader": loader,
             "loader_version": lver, "mods": sum(1 for k in fl if k.startswith("mods/")),
-            "size": sum(os.path.getsize(v) for v in fl.values()), "sync": bool(playerpack.settings(s).get("sync")
-                                                                               and playerpack.automodpack_jar(s)),
+            "size": sum(os.path.getsize(v) for v in fl.values()), "sync": playerpack.sync_active(s),
             "pack": {"title": (s.get("pack") or {}).get("title"), "version": (s.get("pack") or {}).get("version")} if s.get("pack") else None,
             "online": s.get("phase") == "online"}
 

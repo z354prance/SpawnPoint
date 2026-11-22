@@ -50,6 +50,10 @@ _lock = threading.Lock()
 
 
 # ------------------------------------------------------------------ settings
+def sync_active(s: dict) -> bool:
+    """AutoModpack is on and its jar is on the server (it arrives at the next start)."""
+    return bool(settings(s).get("sync") and automodpack_jar(s))
+
 def settings(s: dict) -> dict:
     return dict(s.get("player_pack") or {})
 
@@ -263,7 +267,7 @@ def prism_zip(s: dict, pack_url: str) -> bytes:
 def plain_zip_files(s: dict) -> list[tuple[str, str | bytes]]:
     """(name in zip, file path or bytes) for the any-launcher zip."""
     _, _, fl, _ = index(s)
-    amp = automodpack_jar(s) if settings(s).get("sync") else None
+    amp = automodpack_jar(s) if sync_active(s) else None
     if amp:                                                   # AutoModpack fetches the rest on first join
         items: list[tuple[str, str | bytes]] = [(f"mods/{os.path.basename(amp)}", amp)]
     else:
@@ -275,7 +279,7 @@ def plain_zip_files(s: dict) -> list[tuple[str, str | bytes]]:
 
 
 def readme(s: dict, loader: str, lver: str) -> str:
-    sync = settings(s).get("sync") and automodpack_jar(s)
+    sync = sync_active(s)
     ld = {"neoforge": "NeoForge", "forge": "Forge", "fabric": "Fabric", "quilt": "Quilt"}.get(loader, loader)
     return "\n".join([
         f"{s.get('name', s['id'])}: files for joining {s.get('hostname', '')}", "",
@@ -517,6 +521,11 @@ async def mrpack(s: dict) -> str:
     Modrinth download (so they come from Modrinth); everything else is inside it."""
     import asyncio
     _, _, fl, _ = await asyncio.to_thread(index, s)
+    if await asyncio.to_thread(sync_active, s):
+        # Just AutoModpack: the Modrinth App sets up the right Minecraft and loader, and
+        # AutoModpack brings everything else on the first join.
+        amp = automodpack_jar(s)
+        fl = {f"mods/{os.path.basename(amp)}": amp}
     mods = {k: v for k, v in fl.items() if k.startswith("mods/")}
     sha1s = {k: await asyncio.to_thread(_sha1, v) for k, v in mods.items()}
     found = await modrinth_lookup(sorted(set(sha1s.values())))

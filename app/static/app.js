@@ -1096,6 +1096,7 @@ async function drawPlayerPack(sid, p) {
       <p class="sub">${p.mods} mods and ${p.count - p.mods} other files, ${mb(p.size)}.${p.left_out.length ? ` Left out: ${p.left_out.length}.` : ""}</p>
       ${p.left_out.length ? `<details><summary class="sub">What's left out, and why</summary><ul class="sub" style="margin:6px 0 0 18px">${p.left_out.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
       <label class="row" style="color:var(--ink);margin-top:12px"><input type="checkbox" id="ppsync" ${p.sync ? "checked" : ""}> Keep players' mods in sync with AutoModpack</label>
+      ${p.sync_pending ? `<p class="sub" style="color:var(--warn)">AutoModpack is added but isn't on the server yet: restart the server to download it. Until then, the zip and the Modrinth file still carry all the mods and tell players to download again after changes. <button class="small" id="pprestart">Restart now</button></p>` : p.sync ? `<p class="sub" style="color:var(--gold)">AutoModpack is running. The zip and the Modrinth file only carry AutoModpack, which brings the rest on first join.</p>` : ""}
       <p class="sub">Adds the AutoModpack mod to the server and to all three downloads. When this server's mods change, players' copies update the next time they join, whichever launcher they use. It goes through the same address and port as the game.</p>` : ""}
     <p class="sub" style="color:var(--warn)">Mods belong to their authors and many licences don't allow sharing them elsewhere. Keep the link to your own players. For a public modpack server, point people to the official pack instead.</p>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px">${p.page ? `<a class="btn small" href="${esc(p.page)}" target="_blank" rel="noopener">Open the page</a>` : ""}<button class="primary small" id="ppsave">Save</button></div>`;
@@ -1108,6 +1109,7 @@ async function drawPlayerPack(sid, p) {
   $("#ppon").onchange = () => save();
   $("#ppsync") && ($("#ppsync").onchange = () => save({ sync: $("#ppsync").checked }));
   $("#ppnew") && ($("#ppnew").onclick = () => confirm("Make a new link? The old one stops working, and Prism instances made from it stop updating.") && save({ new_link: true }, "New link made"));
+  $("#pprestart") && ($("#pprestart").onclick = async () => { if (await act(() => api(`/servers/${sid}/action/restart`, { method: "POST" }), "Restarting to add AutoModpack")) refreshList(); });
   $("#ppcopy") && ($("#ppcopy").onclick = () => navigator.clipboard.writeText(p.page).then(() => toast("Link copied")));
 }
 
