@@ -67,9 +67,10 @@ for f in sorted(glob.glob(os.path.join(rd, "*.mca")))[:2]:
         if off > 20:
             bad += 1
             if example is None:
-                example = (os.path.basename(f), lx, lz, type(hm).__name__, getattr(hm, "dtype", None), len(hm),
-                           h[0, :6].tolist(), sh[0, :6].tolist(), names[0, :3].tolist(), sn[0, :3].tolist(),
-                           sorted(nbt), sorted(nbt["Heightmaps"]))
+                ii = np.argwhere(h != sh)[:8]
+            example = [(int(a), int(b), int(h[a, b]), int(sh[a, b]), names[a, b], sn[a, b]) for a, b in ii]
+            example.append(("rows with any mismatch", sorted(set(int(a) for a, b in np.argwhere(h != sh)))))
+            example.append(("section Ys", sorted(secs)))
 print(f"surface check: {bad} of {total} full chunks disagree with their blocks; example {example}")
 assert mapper.due(state.get("demo")), "a fresh world should be due for a render"
 t0 = time.time()
