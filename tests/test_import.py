@@ -170,3 +170,16 @@ def test_hidden_folders_keep_their_dot(tmp_path):
     make_zip(tmp_path / "s.zip", {".fabric/server/1.21.1-server.jar": "x", "server.properties": "a=b\n"}, wrap="srv/")
     importer.extract(str(tmp_path / "s.zip"), str(tmp_path / "out"))
     assert (tmp_path / "out" / ".fabric").is_dir() and not (tmp_path / "out" / "fabric").exists()
+
+
+def test_fresh_world_still_gets_its_spawn_generated(tmp_path):
+    (tmp_path / "server.jar").write_bytes(vanilla_jar("1.21.4"))
+    rd = tmp_path / "world" / "region"; rd.mkdir(parents=True); (tmp_path / "world" / "level.dat").write_text("x")
+    for x in (-1, 0):
+        for z in (-1, 0):
+            (rd / f"r.{x}.{z}.mca").write_bytes(b"")
+    d = importer.detect(str(tmp_path))
+    assert d["has_world"] and not d["played_world"]
+    for i in range(1, 9):
+        (rd / f"r.{i}.5.mca").write_bytes(b"")
+    assert importer.detect(str(tmp_path))["played_world"]

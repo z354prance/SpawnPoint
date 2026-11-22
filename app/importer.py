@@ -42,6 +42,9 @@ def _members(path: str) -> tuple[str, list[tuple[str, int, bool]]]:
         raise ImportError_("That file isn't a .zip or .tar.gz archive.")
 
 
+FRESH_REGIONS = 9            # a first start makes about 4 region files; more means people have played
+
+
 def _norm(name: str) -> str:
     """Archive member name with backslashes fixed and a leading './' or '/' removed.
     (Not lstrip('./'): that would turn '.fabric' into 'fabric' and hide '../'.)"""
@@ -209,6 +212,15 @@ def detect(sdir: str) -> dict:
         out["kind"] = "unknown-modded"
     out["mc_version"] = mc
     out["has_world"] = any(os.path.exists(os.path.join(sdir, d, "level.dat")) for d in _dirs(sdir))
+    # A world that was only started once (a fresh server pack) has a few region files
+    # around spawn. Treat it as new, so the spawn area is generated before it opens.
+    regions = 0
+    for d in _dirs(sdir):
+        rd = os.path.join(sdir, d, "region")
+        if os.path.exists(os.path.join(sdir, d, "level.dat")) and os.path.isdir(rd):
+            regions = max(regions, sum(1 for f in os.listdir(rd) if f.endswith(".mca")))
+    out["world_regions"] = regions
+    out["played_world"] = regions > FRESH_REGIONS
     return out
 
 
@@ -277,9 +289,9 @@ async def _run(sid: str, upload_path: str) -> None:
                          detected=found, phase="installing",
                          phase_msg=f"Installing {kind} {mc}" + (f" ({loader_version})" if loader_version else ""))
         await servers.prepare(s)
-        # Existing world: open straight away and only fill in chunks that don't exist yet.
+        # Explored world: open straight away and only fill in chunks that don't exist yet.
         st = state.get(sid)
-        st["pregen"]["stage"] = "background" if found.get("has_world") else "pending"
+        st["pregen"]["stage"] = "background" if found.get("played_world") else "pending"
         state.update(sid, pregen=st["pregen"])
         await pregen.run(sid, fresh=False)
     except asyncio.CancelledError:
