@@ -86,3 +86,10 @@ jobs:
         run: python scripts/ci_map_check.py
         env:
           MC_VERSION: ${{ matrix.version }}
+      - name: Keep the world for debugging
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-${{ matrix.version }}
+          path: /tmp/mapci/servers/demo/world
+          retention-days: 3
