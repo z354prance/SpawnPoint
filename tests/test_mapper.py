@@ -451,3 +451,51 @@ def test_one_bad_chunk_does_not_lose_the_region(tmp_path, monkeypatch):
     monkeypatch.setattr(flatmap, "biome_colors", flaky)
     img = flatmap.render_region(path, "overworld", flatmap.Palette())
     assert img is not None and img[0, 16:32, 3].all()       # the other chunk is still drawn
+
+
+def test_blank_chunks_fall_back_to_the_blocks():
+    good = flatmap.parse_nbt(chunk_118(70))
+    # heightmap gone: the surface is found from the blocks
+    nohm = flatmap.parse_nbt(chunk_118(70)); nohm["Heightmaps"] = {}
+    names, h, _ = flatmap.chunk_columns(nohm, "overworld")
+    assert names[4, 4] == "minecraft:grass_block" and h[4, 4] == 70
+    # heightmap pointing above everything (a mod that doesn't keep it up to date)
+    stale = flatmap.parse_nbt(chunk_118(70, top_block="minecraft:sand"))
+    stale["Heightmaps"]["MOTION_BLOCKING"] = good["Heightmaps"]["MOTION_BLOCKING"] + np.uint64(0)
+    stale["sections"] = [s for s in stale["sections"] if s["Y"] != 4]     # the section y=64..79 isn't stored
+    names, h, _ = flatmap.chunk_columns(stale, "overworld")
+    assert names[4, 4] == "minecraft:stone" and h[4, 4] == 63
+
+
+def test_lz4_and_external_chunks_and_reasons(tmp_path):
+    raw = chunk_118(70)
+    # lz4-java block stream, stored uncompressed ("raw" method) and as an LZ4 block of literals
+    def lz4_literals(b):
+        n = len(b); tok = bytearray()
+        if n >= 15:
+            tok.append(0xF0); r = n - 15
+            while r >= 255: tok.append(255); r -= 255
+            tok.append(r)
+        else:
+            tok.append(n << 4)
+        return bytes(tok) + b
+    blk = lz4_literals(raw)
+    stream = b"LZ4Block" + bytes([0x20]) + len(blk).to_bytes(4, "little") + len(raw).to_bytes(4, "little") + b"\0\0\0\0" + blk
+    stream += b"LZ4Block" + bytes([0x10]) + b"\0" * 12
+    assert flatmap._decompress(4, stream) == raw
+    assert flatmap._lz4_block(bytes([0x1F, ord("a"), 1, 0, 0]), 20) == b"a" * 20      # overlapping match
+    # an external .mcc chunk, a garbage chunk, and an unfinished one
+    path = str(tmp_path / "r.0.0.mca")
+    write_region(path, {(0, 0): b"x", (1, 0): chunk_118(70, status="minecraft:noise"), (2, 0): chunk_118(70)})
+    data = bytearray(open(path, "rb").read())
+    data[8192 + 4] = 0x82                                          # chunk (0,0) lives in c.0.0.mcc
+    open(path, "wb").write(bytes(data))
+    open(str(tmp_path / "c.0.0.mcc"), "wb").write(zlib.compress(raw))
+    why = {}
+    img = flatmap.render_region(path, "overworld", flatmap.Palette(), why)
+    assert img[5, 5, 3] == 255 and img[5, 37, 3] == 255 and img[5, 20, 3] == 0
+    assert why == {"not generated yet": 1}
+    write_region(path, {(0, 0): zlib.decompress(zlib.compress(b"\x0a\x00\x00\x09"))})
+    why = {}
+    flatmap.render_region(path, "overworld", flatmap.Palette(), why)
+    assert list(why) and list(why)[0].startswith("bad data")

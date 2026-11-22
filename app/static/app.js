@@ -1358,7 +1358,8 @@ function drawImportTab() {
       <div class="row" style="margin-top:8px;flex-wrap:nowrap"><label for="imk" class="sr">Type</label><select id="imk" style="flex:1"><option value="">Auto-detect type</option>
         ${["forge", "neoforge", "fabric", "quilt", "paper", "purpur", "vanilla"].map((k) => `<option>${k}</option>`).join("")}</select>
         <label for="imv" class="sr">Minecraft version</label><input id="imv" placeholder="Minecraft version, e.g. 1.20.1" style="flex:1"></div></details>
-    <div id="upw" class="hidden" style="margin-top:14px"><div class="bar"><i id="upb" class="live" style="width:0%"></i></div><div class="sub" id="upt" style="margin-top:6px">Uploading…</div></div>
+    <div id="upw" class="hidden" style="margin-top:14px"><div class="bar"><i id="upb" class="live" style="width:0%"></i></div><div class="sub" id="upt" style="margin-top:6px">Uploading…</div>
+      <p class="sub" style="margin:8px 0 0">${location.hostname.match(/^(\d+\.){3}\d+$|^localhost$|\.local$/) ? "" : "Big archive? It uploads much faster from your home network address (the server's IP with port 8090) than through a tunnel or proxy, which caps it at your internet upload speed."}</p></div>
     <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="primary" id="mk">Upload and deploy</button></div>`;
   const nm = $("#nm");
   nm.oninput = () => ($("#addrprev").textContent = (slug(nm.value) || "name") + "." + INFO.base_domain);
@@ -1371,12 +1372,16 @@ function drawImportTab() {
     xhr.open("PUT", "/api/import?" + q.toString());
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     $("#upw").classList.remove("hidden"); $("#mk").disabled = true;
-    const started = Date.now();
+    const marks = [];                                    // speed over the last 10 seconds, not since the start
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable) return;
-      const pct = (e.loaded / e.total) * 100, mbs = e.loaded / 2 ** 20 / Math.max(1, (Date.now() - started) / 1000);
+      const now = Date.now(); marks.push([now, e.loaded]); while (marks.length > 2 && now - marks[0][0] > 10000) marks.shift();
+      const [t0, b0] = marks[0], mbs = now > t0 ? (e.loaded - b0) / 2 ** 20 / ((now - t0) / 1000) : 0;
+      const pct = (e.loaded / e.total) * 100, left = mbs > 0 ? (e.total - e.loaded) / 2 ** 20 / mbs : 0;
+      const eta = left > 90 ? `about ${Math.round(left / 60)} min left` : left > 0 ? `${Math.round(left)} s left` : "";
       $("#upb").style.width = pct.toFixed(1) + "%";
-      $("#upt").textContent = `Uploading ${(e.loaded / 2 ** 20).toFixed(0)} of ${(e.total / 2 ** 20).toFixed(0)} MB (${pct.toFixed(0)}%, ${mbs.toFixed(1)} MB/s)`;
+      $("#upt").textContent = e.loaded >= e.total ? "Uploaded. Saving and checking the archive…"
+        : `Uploading ${(e.loaded / 2 ** 20).toFixed(0)} of ${(e.total / 2 ** 20).toFixed(0)} MB (${pct.toFixed(0)}%, ${mbs.toFixed(1)} MB/s${eta ? ", " + eta : ""})`;
     };
     xhr.onload = async () => {
       let d = {}; try { d = JSON.parse(xhr.responseText); } catch {}

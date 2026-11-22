@@ -469,9 +469,21 @@ async def import_server(request: Request, name: str = "", filename: str = "", ki
     ext = ".zip" if low.endswith(".zip") else ".tar.gz"
     path = os.path.join(importer.UPLOAD_DIR, _secrets.token_hex(8) + ext)
     try:
-        with open(path, "wb") as f:
+        # Collect the body in 8 MB pieces and write each one on a worker thread, so a slow
+        # disk (an Unraid array with parity, say) never stalls the app while it catches up.
+        with open(path, "wb", buffering=0) as f:
+            buf, pending = bytearray(), None
             async for chunk in request.stream():
-                f.write(chunk)
+                buf += chunk
+                if len(buf) >= 8 << 20:
+                    if pending:
+                        await pending
+                    pending = asyncio.ensure_future(asyncio.to_thread(f.write, bytes(buf)))
+                    buf.clear()
+            if pending:
+                await pending
+            if buf:
+                await asyncio.to_thread(f.write, bytes(buf))
     except Exception:
         if os.path.exists(path):
             os.remove(path)

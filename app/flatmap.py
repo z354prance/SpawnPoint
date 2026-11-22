@@ -45,6 +45,8 @@ def _skip(b, t, p):
     if t == 9:
         et, n = struct.unpack_from(">bi", b, p)
         p += 5
+        if et == 0:
+            return p
         if et in _FIXED:
             return p + n * _FIXED[et]
         for _ in range(n):
@@ -88,6 +90,8 @@ def _read(b, t, p):
     if t == 9:
         et, n = struct.unpack_from(">bi", b, p)
         p += 5
+        if et == 0:                                         # some mods write lists of "nothing" with a count
+            return [], p
         items = []
         for _ in range(n):
             v, p = _read(b, et, p)
@@ -435,20 +439,49 @@ def _legacy_columns(level: dict, dim: str, ids: dict | None):
     return names, heights, depth
 
 
-def chunk_columns(nbt: dict, dim: str, ids: dict | None = None):
+def _scan_top(secs: dict, min_y: int, want: np.ndarray, names: np.ndarray, heights: np.ndarray) -> None:
+    """Fill the `want` columns with the highest non-air block, reading the sections from
+    the top down. Used when a chunk has no heightmap or it points at nothing."""
+    want = want.copy()
+    for sy in sorted(secs, reverse=True):
+        if not want.any():
+            return
+        pal, idx = _decode(secs[sy])
+        lut = np.array(pal, dtype=object)
+        solid = ~np.isin(lut, list(_AIR))
+        if not solid.any():
+            continue
+        cube = solid[idx].reshape(16, 16, 16)              # y, z, x
+        has = cube.any(axis=0) & want
+        if not has.any():
+            continue
+        top = 15 - cube[::-1].argmax(axis=0)
+        zi, xi = np.indices((16, 16))
+        blk = lut[idx.reshape(16, 16, 16)[top, zi, xi]]
+        names[has] = blk[has]
+        heights[has] = (sy * 16 + top)[has]
+        want &= ~has
+
+
+def chunk_columns(nbt: dict, dim: str, ids: dict | None = None, why: dict | None = None):
     """Top block name and height for each of the 16x16 columns (row = z, column = x),
     plus water depth. Returns None for chunks that aren't generated far enough to show.
     `ids` maps a modded pre-1.13 world's numeric block ids to names."""
     level = nbt.get("Level", nbt)
     if "Status" not in level and any(isinstance(x, dict) and "Blocks" in x for x in level.get("Sections") or []):
         return _legacy_columns(level, dim, ids)
+    def miss(reason):
+        if why is not None:
+            why[reason] = why.get(reason, 0) + 1
     status = level.get("Status") or ""
     if status in _EARLY:
+        miss("not generated yet")
         return None
     dv = nbt.get("DataVersion", 0)
     min_y = -64 if (dv >= 2825 and dim == "overworld") else 0
     secs = _sections(level)
     if not secs:
+        miss("no blocks stored")
         return None
     hm = level.get("Heightmaps") or {}
     names = np.full((16, 16), "", dtype=object)
@@ -482,9 +515,16 @@ def chunk_columns(nbt: dict, dim: str, ids: dict | None = None):
     mb = hm.get("MOTION_BLOCKING")
     if mb is None:
         mb = hm.get("WORLD_SURFACE")
-    if mb is None or len(mb) == 0:
-        return None
-    h = unpack(mb, 9, 256).reshape(16, 16)
+    try:
+        h = unpack(mb, 9, 256).reshape(16, 16) if mb is not None and len(mb) else None
+    except ValueError:
+        h = None
+    if h is None:                                           # no usable heightmap: find the surface from the blocks
+        _scan_top(secs, min_y, np.ones((16, 16), bool), names, heights)
+        if not (names != "").any():
+            miss("only air")
+            return None
+        return names, heights, depth
     heights = (h - 1 + min_y).astype(np.int32)
     valid = h > 0
     sec_y = heights >> 4
@@ -502,6 +542,10 @@ def chunk_columns(nbt: dict, dim: str, ids: dict | None = None):
         sel = idx[ly * 256 + zz[m] * 16 + xx[m]]
         out[m] = np.array(pal, dtype=object)[sel]
     names = out
+    gap = (names == "") | np.isin(names, list(_AIR))
+    if gap.any():                                           # heightmap points at nothing: look for the real surface
+        _scan_top(secs, min_y, gap, names, heights)
+        names = np.where(np.isin(names, list(_AIR)), "", names)
     of = hm.get("OCEAN_FLOOR")
     if of is not None and len(of):
         floor = (unpack(of, 9, 256).reshape(16, 16) - 1 + min_y).astype(np.int32)
@@ -585,32 +629,103 @@ def _blur(a: np.ndarray, r: int) -> np.ndarray:
     return (c[k:, k:] - c[:-k, k:] - c[k:, :-k] + c[:-k, :-k]) / (k * k)
 
 
-def read_chunks(path: str):
-    """(local_x, local_z, nbt) for each stored chunk of a region file."""
+def _lz4_block(src: bytes, size: int) -> bytes:
+    """Decode one raw LZ4 block (no framing)."""
+    out, i, n = bytearray(), 0, len(src)
+    while i < n:
+        tok = src[i]; i += 1
+        lit = tok >> 4
+        if lit == 15:
+            while True:
+                b = src[i]; i += 1; lit += b
+                if b != 255:
+                    break
+        out += src[i:i + lit]; i += lit
+        if i >= n:
+            break
+        off = src[i] | (src[i + 1] << 8); i += 2
+        ml = tok & 15
+        if ml == 15:
+            while True:
+                b = src[i]; i += 1; ml += b
+                if b != 255:
+                    break
+        ml += 4
+        start = len(out) - off
+        if off >= ml:
+            out += out[start:start + ml]
+        else:
+            for k in range(ml):
+                out.append(out[start + k])
+    return bytes(out[:size])
+
+
+def _lz4_java(raw: bytes) -> bytes:
+    """Minecraft's LZ4 chunks (region-file-compression=lz4) use lz4-java's block stream."""
+    out, p = bytearray(), 0
+    while p + 21 <= len(raw) and raw[p:p + 8] == b"LZ4Block":
+        tok = raw[p + 8]
+        clen = int.from_bytes(raw[p + 9:p + 13], "little")
+        dlen = int.from_bytes(raw[p + 13:p + 17], "little")
+        body = raw[p + 21:p + 21 + clen]
+        p += 21 + clen
+        if dlen == 0:
+            break
+        out += body if (tok & 0xF0) == 0x10 else _lz4_block(body, dlen)
+    return bytes(out)
+
+
+def _decompress(ctype: int, raw: bytes) -> bytes:
+    if ctype == 2:
+        return zlib.decompress(raw)
+    if ctype == 1:
+        return gzip.decompress(raw)
+    if ctype == 3:
+        return raw
+    if ctype == 4:
+        return _lz4_java(raw)
+    raise ValueError(f"unknown compression {ctype}")
+
+
+def read_chunks(path: str, why: dict | None = None):
+    """(local_x, local_z, nbt) for each stored chunk of a region file. Chunks that can't be
+    read are counted in `why` by reason."""
+    def miss(reason):
+        if why is not None:
+            why[reason] = why.get(reason, 0) + 1
     with open(path, "rb") as f:
         data = f.read()
     if len(data) < 8192:
         return
+    m = re.search(r"r\.(-?\d+)\.(-?\d+)\.mca$", os.path.basename(path))
+    rx, rz = (int(m.group(1)), int(m.group(2))) if m else (0, 0)
     for i in range(1024):
         off = int.from_bytes(data[i * 4:i * 4 + 3], "big")
         if off == 0:
             continue
         start = off * 4096
         if start + 5 > len(data):
+            miss("cut off")
             continue
         length = int.from_bytes(data[start:start + 4], "big")
         ctype = data[start + 4]
         raw = data[start + 5:start + 4 + length]
         try:
-            if ctype == 2:
-                raw = zlib.decompress(raw)
-            elif ctype == 1:
-                raw = gzip.decompress(raw)
-            elif ctype != 3:
-                continue                                   # LZ4 (rare) and external chunk files aren't read
-            yield i % 32, i // 32, parse_nbt(raw)
+            if ctype & 0x80:                               # stored in its own file next to the region (chunks over 1 MB)
+                ext = os.path.join(os.path.dirname(path), f"c.{rx * 32 + i % 32}.{rz * 32 + i // 32}.mcc")
+                with open(ext, "rb") as f:
+                    raw = f.read()
+                ctype &= 0x7F
+            raw = _decompress(ctype, raw)
         except Exception:
+            miss(f"unreadable (compression {ctype})")
             continue
+        try:
+            nbt = parse_nbt(raw)
+        except Exception as e:
+            miss(f"bad data ({type(e).__name__})")
+            continue
+        yield i % 32, i // 32, nbt
 
 
 _STATUS_TAG = b"\x08\x00\x06Status"
@@ -636,8 +751,11 @@ def chunk_statuses(path: str, wanted: set[tuple[int, int]]) -> dict[tuple[int, i
         start = off * 4096
         length = int.from_bytes(data[start:start + 4], "big")
         ctype, raw = data[start + 4], data[start + 5:start + 4 + length]
+        if ctype & 0x80:
+            out[(lx, lz)] = "minecraft:full"               # only finished, heavy chunks get their own file
+            continue
         try:
-            raw = zlib.decompress(raw) if ctype == 2 else gzip.decompress(raw) if ctype == 1 else raw if ctype == 3 else b""
+            raw = _decompress(ctype, raw)
         except Exception:
             continue
         j = raw.find(_STATUS_TAG)
@@ -653,8 +771,10 @@ def is_finished(status: str) -> bool:
     return status.rpartition(":")[2] in _DONE
 
 
-def render_region(path: str, dim: str, palette: Palette):
-    """RGBA image array (512x512x4) for one region file, or None if it holds nothing to draw."""
+def render_region(path: str, dim: str, palette: Palette, why: dict | None = None):
+    """RGBA image array (512x512x4) for one region file, or None if it holds nothing to draw.
+    Chunks that are stored but not drawn are counted in `why` by reason."""
+    why = {} if why is None else why
     rgb = np.zeros((REGION, REGION, 3), dtype=np.float32)
     height = np.full((REGION, REGION), -10_000, dtype=np.int32)
     depth = np.zeros((REGION, REGION), dtype=np.int32)
@@ -665,10 +785,11 @@ def render_region(path: str, dim: str, palette: Palette):
     tbright = np.ones((REGION, REGION), dtype=np.float32)
     any_chunk = False
     chunks = []
-    for lx, lz, nbt in read_chunks(path):
+    for lx, lz, nbt in read_chunks(path, why):
         try:
-            got = chunk_columns(nbt, dim, palette.legacy_blocks)
-        except Exception:
+            got = chunk_columns(nbt, dim, palette.legacy_blocks, why)
+        except Exception as e:
+            why[f"couldn't read blocks ({type(e).__name__}: {str(e)[:60]})"] = why.get(f"couldn't read blocks ({type(e).__name__}: {str(e)[:60]})", 0) + 1
             continue
         if not got:
             continue
@@ -710,8 +831,9 @@ def render_region(path: str, dim: str, palette: Palette):
     for c in chunks:                                       # one odd chunk mustn't cost the whole region
         try:
             draw_one(*c)
-        except Exception:
-            continue
+        except Exception as e:
+            k = f"couldn't draw ({type(e).__name__}: {str(e)[:60]})"
+            why[k] = why.get(k, 0) + 1
     if not any_chunk:
         return None
     # biome colours blend into each other over a few blocks, as in game

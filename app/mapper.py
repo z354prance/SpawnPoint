@@ -325,6 +325,7 @@ async def render(sid: str, mspt_of) -> bool:
         _procs[sid] = proc
         mtimes = {(t[0], t[1], t[2]): t[6] for t in todo}
         results, done, paused, errors = [], 0, False, []
+        skipped: dict[str, list] = {}                       # reason -> [chunk count, example region]
 
         async def watch_lag():
             nonlocal paused
@@ -351,6 +352,11 @@ async def render(sid: str, mspt_of) -> bool:
                 if "x" in msg:
                     results.append(msg)
                     done += 1
+                    for why, n in (msg.get("skipped") or {}).items():
+                        if why == "not generated yet":
+                            continue                        # the edge of the world; that's expected
+                        e = skipped.setdefault(why, [0, f"r.{msg['x']}.{msg['z']} ({msg['dim']})"])
+                        e[0] += n
                     if not msg["ok"]:
                         errors.append(f"r.{msg['x']}.{msg['z']} ({msg['dim']}): {msg.get('error', '')}")
                     if done % 4 == 0 or done == total:
@@ -388,6 +394,11 @@ async def render(sid: str, mspt_of) -> bool:
             for e in errors:
                 log.warning("[%s] map: %s", sid, e)
             note = f"{len(errors)} region(s) couldn't be drawn, for example {errors[0][:160]}"
+        if skipped:
+            parts = [f"{n} {why}, e.g. in {ex}" for why, (n, ex) in sorted(skipped.items(), key=lambda kv: -kv[1][0])[:3]]
+            for p in parts:
+                log.warning("[%s] map chunks skipped: %s", sid, p)
+            note = (note + ". " if note else "") + "Chunks left blank: " + "; ".join(parts)
         set_status(sid, status="ready", rendered=time.time(), took=round(time.time() - started), percent=100, note=note, full=False)
         log.info("[%s] map: drew %d regions in %ds", sid, done, round(time.time() - started))
         return True

@@ -30,15 +30,16 @@ def _init(textures, legacy=None):
 
 def _one(job):
     dim, x, z, path, out_full, out_small = job
+    why = {}
     try:
-        img = flatmap.render_region(path, dim, _palette)
+        img = flatmap.render_region(path, dim, _palette, why)
         if img is None:
             for f in (out_full, out_small):
                 if os.path.exists(f):
                     os.remove(f)
-            return {"dim": dim, "x": x, "z": z, "ok": True, "empty": True}
+            return {"dim": dim, "x": x, "z": z, "ok": True, "empty": True, "skipped": why}
         flatmap.save_tiles(img, out_full, out_small)
-        return {"dim": dim, "x": x, "z": z, "ok": True}
+        return {"dim": dim, "x": x, "z": z, "ok": True, "skipped": why}
     except Exception as e:
         return {"dim": dim, "x": x, "z": z, "ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
 
