@@ -60,7 +60,9 @@ def chunk_118(top_y, top_block="minecraft:grass_block", floor=None, status="mine
         if not idx.any():
             secs.append([B("Y", sy), C("block_states", LISTS("palette", ["minecraft:air"]) if strings else LISTC("palette", [[S("Name", "minecraft:air")]]))])
             continue
-        palette = LISTS("palette", [p + ("[snowy=false]" if strings and "grass" in p else "") for p in pal]) if strings \
+        # 26.x mixes plain names with full states; plain names are then wrapped as {"": name}
+        palette = LISTC("palette", [[S("Name", p), C("Properties", S("snowy", "false"))] if "grass" in p else [S("", p)] for p in pal]) \
+            if strings == "mixed" else LISTS("palette", [p + ("[snowy=false]" if "grass" in p else "") for p in pal]) if strings \
             else LISTC("palette", [[S("Name", p)] for p in pal])
         secs.append([B("Y", sy), C("block_states", palette, L("data", pack(idx, 4)))])
     hm = (top + 1 - min_y).reshape(-1)
@@ -519,5 +521,7 @@ def test_lz4_and_external_chunks_and_reasons(tmp_path):
 
 
 def test_26_x_string_palettes():
-    names, h, _ = flatmap.chunk_columns(flatmap.parse_nbt(chunk_118(70, strings=True)), "overworld")
-    assert names[3, 3] == "minecraft:grass_block" and h[3, 3] == 70
+    for kind in (True, "mixed"):
+        names, h, _ = flatmap.chunk_columns(flatmap.parse_nbt(chunk_118(70, strings=kind)), "overworld")
+        assert names[3, 3] == "minecraft:grass_block" and h[3, 3] == 70, kind
+        assert (names != "minecraft:stone").all(), kind

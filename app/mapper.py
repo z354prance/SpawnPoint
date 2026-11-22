@@ -280,7 +280,7 @@ def has_map(sid: str) -> bool:
 
 # Bump when the drawing changes in a way old tiles should be redrawn for (every server's
 # whole map is drawn again once, in the background).
-RENDERER = 5
+RENDERER = 6
 
 
 def outdated(sid: str) -> bool:

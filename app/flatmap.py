@@ -348,9 +348,18 @@ _EARLY = {"empty", "structure_starts", "structure_references", "biomes", "noise"
 _DONE = {"full", "postprocessed", "fullchunk"}
 
 
+def _unwrap(p):
+    """NBT lists hold one type, so when a list mixes strings and compounds (as 26.x
+    palettes do) each string is stored wrapped as {"": "minecraft:stone"}."""
+    while isinstance(p, dict) and len(p) == 1 and "" in p:
+        p = p[""]
+    return p
+
+
 def _state_name(p) -> str:
     """A palette entry's block name. Up to 1.21 an entry is {Name, Properties}; since 26.x
-    it's a string like "minecraft:oak_log[axis=y]"."""
+    it can also be a string like "minecraft:oak_log[axis=y]"."""
+    p = _unwrap(p)
     if isinstance(p, dict):
         return p.get("Name", "minecraft:air")
     if isinstance(p, str):
@@ -601,7 +610,7 @@ def chunk_biomes(nbt: dict, dim: str, heights: np.ndarray, names: dict | None = 
         b = sec.get("biomes")
         if not b or sec.get("Y") is None:
             continue
-        pal = [p if isinstance(p, str) else "minecraft:plains" for p in (b.get("palette") or [])]
+        pal = [q if isinstance(q, str) else "minecraft:plains" for q in (_unwrap(p) for p in (b.get("palette") or []))]
         if not pal:
             continue
         data = b.get("data")
