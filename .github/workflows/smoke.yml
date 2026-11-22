@@ -63,7 +63,7 @@ jobs:
         run: |
           mkdir -p /tmp/amp && sudo chmod 777 /tmp/amp
           start() { docker run -d --name amp -e EULA=TRUE -e TYPE=NEOFORGE -e VERSION=1.21.1 -e ONLINE_MODE=false -e MEMORY=2G \
-            -e MODRINTH_PROJECTS=automodpack -v /tmp/amp:/data itzg/minecraft-server:java21 >/dev/null
+            -e MODRINTH_PROJECTS=automodpack,jei -v /tmp/amp:/data itzg/minecraft-server:java21 >/dev/null
             for i in $(seq 1 150); do docker logs amp 2>&1 | grep -q 'Done (' && return 0; sleep 4; done; docker logs amp 2>&1 | tail -40; return 1; }
           start
           docker stop -t 60 amp && docker rm amp
