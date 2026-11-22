@@ -370,7 +370,7 @@ function genState(s) {
   const p = s.pregen || {}, R = p.full_radius || 5000, sR = p.spawn_radius || 750, pct = (p.percent || 0) / 100;
   let r = 0, label;
   if (p.stage === "spawn") { r = sR * Math.sqrt(pct); label = `Generating the spawn area: ${(pct * 100).toFixed(0)}% of ${sR.toLocaleString()} blocks`; }
-  else if (p.stage === "background") { r = Math.max(sR, R * Math.sqrt(pct)); label = `${(pct * 100).toFixed(0)}% of ${R.toLocaleString()} blocks${s.phase !== "online" ? "" : p.paused ? (p.paused_for === "hand" ? ", paused" : p.paused_for === "players" ? ", waiting until nobody is playing" : p.paused_for === "disk" ? ", paused: the disk is nearly full" : ", paused while the server is busy") : s.burst ? ", using spare cores" : ""}`; }
+  else if (p.stage === "background") { r = Math.max(sR, R * Math.sqrt(pct)); label = `${(pct * 100).toFixed(0)}% of ${R.toLocaleString()} blocks${s.phase !== "online" ? "" : p.paused ? (p.paused_for === "hand" ? ", paused by hand: press Resume pre-gen to carry on" : p.paused_for === "players" ? ", waiting until nobody is playing" : p.paused_for === "disk" ? ", paused: the disk is nearly full" : ", paused while the server is busy") : s.burst ? ", using spare cores" : ""}`; }
   else if (p.stage === "done" && s.loader === "vanilla" && !p.method) { label = "Pre-generates in the background from the next start"; }
   else if (p.stage === "done") { r = R; label = `Generated out to ${R.toLocaleString()} blocks`; }
   else if (p.stage === "skipped") { label = "This Minecraft version can't pre-generate (needs Chunky or Minecraft 1.14+)"; }
@@ -393,6 +393,7 @@ function mapStatus(s) {
   if (m.status === "paused" || m.status === "waiting" || m.status === "error" || m.status === "queued") return m.note || "";
   if (s.map_ready && m.rendered) return `Map updated ${ago(m.rendered)}${m.note ? `. ${m.note}` : ""}`;
   if (s.map_ready) return "";
+  if (m.rendered) return `Nothing to draw yet (checked ${ago(m.rendered)})${m.note ? `. ${m.note}` : ": no finished chunks on disk so far"}`;
   return "The terrain map is drawn on spare cores and appears here when ready.";
 }
 async function loadMapIndex(sid) {
