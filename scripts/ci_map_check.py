@@ -12,16 +12,33 @@ from app import mapper, state, topology, main, users, flatmap
 from fastapi.testclient import TestClient
 
 state.load()
-state.put({"id": "demo", "name": "demo", "phase": "stopped", "mc_version": "1.21.1", "loader": "vanilla",
+state.put({"id": "demo", "name": "demo", "phase": "stopped", "mc_version": os.environ.get("MC_VERSION", "1.21.1"), "loader": "vanilla",
            "hostname": "demo.example", "memory": {"max_gb": 2}, "pregen": {"stage": "done", "full_radius": 200, "spawn_radius": 100}})
 print("dimensions:", mapper.dimensions("demo"))
 print("spawn:", mapper.spawn_point("demo"))
+# what one stored chunk looks like, so a new game version's format changes show up here
+rd = mapper.region_dir("demo")
+print("region folder:", rd, sorted(os.listdir(rd))[:6])
+for f in sorted(glob.glob(os.path.join(rd, "*.mca"))):
+    why = {}
+    for lx, lz, nbt in flatmap.read_chunks(f, why):
+        lvl = nbt.get("Level", nbt)
+        print("chunk keys:", sorted(nbt), "| DataVersion", nbt.get("DataVersion"), "| Status", lvl.get("Status"),
+              "| Heightmaps", sorted((lvl.get("Heightmaps") or {})), "| section keys",
+              sorted((lvl.get("sections") or [{}])[0]) if lvl.get("sections") else None)
+        why2 = {}
+        got = flatmap.chunk_columns(nbt, "overworld", None, why2)
+        print("columns:", "ok" if got else f"none {why2}")
+        break
+    print("unreadable chunks in", os.path.basename(f), why)
+    break
 assert mapper.due(state.get("demo")), "a fresh world should be due for a render"
 t0 = time.time()
 ok = asyncio.run(mapper.render("demo", lambda sid: None))
 took = time.time() - t0
 m = state.get("demo")["map"]
 print("map state:", json.dumps(m))
+assert "left blank" not in (m.get("note") or ""), m.get("note")
 assert ok and m["status"] == "ready", "render failed"
 n_regions = sum(len(v) for v in mapper.region_files("demo").values())
 print(f"drew {n_regions} regions in {took:.1f}s ({took / max(n_regions, 1):.2f}s each, {os.cpu_count()} cpus)")

@@ -53,6 +53,12 @@ jobs:
     # Draws a real vanilla world with SpawnPoint's flat map (needs internet for the
     # vanilla client jar's block colours, which CI has).
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { version: "1.21.1", java: java21 }
+          - { version: "26.3", java: java25 }       # 26.1+ keeps the Overworld in dimensions/minecraft/overworld
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,8 +68,8 @@ jobs:
       - name: Generate a small vanilla world
         run: |
           mkdir -p /tmp/mapci/servers/demo
-          docker run -d --name gen -e EULA=TRUE -e TYPE=VANILLA -e VERSION=1.21.1 -e ONLINE_MODE=false -e MEMORY=2G \
-            -e SPAWN_PROTECTION=0 -v /tmp/mapci/servers/demo:/data itzg/minecraft-server:java21
+          docker run -d --name gen -e EULA=TRUE -e TYPE=VANILLA -e VERSION=${{ matrix.version }} -e ONLINE_MODE=false -e MEMORY=2G \
+            -e SPAWN_PROTECTION=0 -e PAUSE_WHEN_EMPTY_SECONDS=0 -v /tmp/mapci/servers/demo:/data itzg/minecraft-server:${{ matrix.java }}
           for i in $(seq 1 120); do docker logs gen 2>&1 | grep -q 'Done (' && break; sleep 3; done
           docker logs gen 2>&1 | tail -5
           # generate a 384-block square around spawn so the map has real terrain to draw
@@ -71,10 +77,12 @@ jobs:
           for x in -192 -64 64; do for z in -192 -64 64; do
             docker exec gen rcon-cli "forceload add $x $z $((x+127)) $((z+127))" || true
           done; done
-          prev=0; for i in $(seq 1 40); do sleep 15; docker exec gen rcon-cli save-all >/dev/null || true; n=$(du -sb /tmp/mapci/servers/demo/world/region | cut -f1); echo "region bytes $n"; [ "$n" = "$prev" ] && break; prev=$n; done
+          prev=0; for i in $(seq 1 40); do sleep 15; docker exec gen rcon-cli save-all >/dev/null || true; n=$(find /tmp/mapci/servers/demo/world -name '*.mca' -printf '%s\n' | awk '{s+=$1} END {print s+0}'); echo "region bytes $n"; [ "$n" = "$prev" ] && break; prev=$n; done
           docker exec gen rcon-cli save-all flush || true
           docker stop -t 60 gen
           sudo chown -R $(id -u) /tmp/mapci
-          ls /tmp/mapci/servers/demo/world/region
+          find /tmp/mapci/servers/demo/world -name '*.mca' | head
       - name: Draw and serve the map
         run: python scripts/ci_map_check.py
+        env:
+          MC_VERSION: ${{ matrix.version }}
