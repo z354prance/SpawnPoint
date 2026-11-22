@@ -50,28 +50,25 @@ for f in sorted(glob.glob(os.path.join(rd, "*.mca"))):
     why = {}
     img = flatmap.render_region(f, "overworld", flatmap.Palette({}), why)
     print("in-process render", os.path.basename(f), "->", "nothing" if img is None else f"{int((img[..., 3] > 0).sum())} px", why)
-# does the stored surface height match the blocks? (26.x changed formats before)
-bad = total = 0
-example = None
-for f in sorted(glob.glob(os.path.join(rd, "*.mca")))[:2]:
+# biomes and block names as stored, and the colours they get
+seen_b, seen_n, raw_b = {}, {}, set()
+pal_dbg = flatmap.Palette(flatmap.load_textures(os.environ.get("MC_VERSION", "1.21.1"), None, os.path.join(mapper.ROOT, ".textures")))
+for f in sorted(glob.glob(os.path.join(rd, "*.mca")))[:1]:
     for lx, lz, nbt in flatmap.read_chunks(f):
         if nbt.get("Status") != "minecraft:full":
             continue
-        total += 1
-        hm = nbt["Heightmaps"]["MOTION_BLOCKING"]
-        names, h, _ = flatmap.chunk_columns(nbt, "overworld")
-        secs = flatmap._sections(nbt)
-        sn = np.full((16, 16), "", dtype=object); sh = np.zeros((16, 16), np.int32)
-        flatmap._scan_top(secs, -64, np.ones((16, 16), bool), sn, sh)
-        off = (h != sh).sum()
-        if off > 20:
-            bad += 1
-            if example is None:
-                ii = np.argwhere(h != sh)[:8]
-            example = [(int(a), int(b), int(h[a, b]), int(sh[a, b]), names[a, b], sn[a, b]) for a, b in ii]
-            example.append(("rows with any mismatch", sorted(set(int(a) for a, b in np.argwhere(h != sh)))))
-            example.append(("section Ys", sorted(secs)))
-print(f"surface check: {bad} of {total} full chunks disagree with their blocks; example {example}")
+        for sec in nbt.get("sections") or []:
+            for p_ in ((sec.get("biomes") or {}).get("palette") or [])[:3]:
+                raw_b.add(repr(p_)[:60])
+        got = flatmap.chunk_columns(nbt, "overworld")
+        bio = flatmap.chunk_biomes(nbt, "overworld", got[1])
+        for v in (bio.reshape(-1).tolist() if bio is not None else ["<none>"]):
+            seen_b[v] = seen_b.get(v, 0) + 1
+        for v in got[0].reshape(-1).tolist():
+            seen_n[v] = seen_n.get(v, 0) + 1
+print("raw biome palette entries:", sorted(raw_b)[:12])
+print("biomes:", {k: (n, flatmap.biome_colors(k)[0]) for k, n in sorted(seen_b.items(), key=lambda kv: -kv[1])[:8]})
+print("top blocks:", {k: (n, pal_dbg.color(k), pal_dbg.tinted.get(k)) for k, n in sorted(seen_n.items(), key=lambda kv: -kv[1])[:8]})
 assert mapper.due(state.get("demo")), "a fresh world should be due for a render"
 t0 = time.time()
 ok = asyncio.run(mapper.render("demo", lambda sid: None))
