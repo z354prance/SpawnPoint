@@ -1251,6 +1251,29 @@ async def public_map_head(token: str, name: str):
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
 
 
+_ASSET_V: dict[tuple, str] = {}
+
+
+def _asset_version() -> str:
+    """A hash of the page's own files, so browsers fetch new copies after an update
+    instead of running a cached script against the new server."""
+    import hashlib
+    key = tuple(os.stat(os.path.join(STATIC, f)).st_mtime_ns for f in ("app.js", "guide.js", "style.css"))
+    if key not in _ASSET_V:
+        h = hashlib.sha1()
+        for f in ("app.js", "guide.js", "style.css"):
+            with open(os.path.join(STATIC, f), "rb") as fh:
+                h.update(fh.read())
+        _ASSET_V.clear()
+        _ASSET_V[key] = h.hexdigest()[:10]
+    return _ASSET_V[key]
+
+
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(STATIC, "index.html"))
+    v = _asset_version()
+    with open(os.path.join(STATIC, "index.html"), encoding="utf-8") as f:
+        html = f.read()
+    for name in ("app.js", "guide.js", "style.css"):
+        html = html.replace(f'"/static/{name}"', f'"/static/{name}?v={v}"')
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})

@@ -259,3 +259,13 @@ def test_ram_pool_follows_host(monkeypatch):
     assert perf.memory_plan("curseforge", 320) == (4, 16, 32)     # the big box is unchanged
     monkeypatch.setattr(config, "_RAM_POOL_SET", "40"); monkeypatch.setattr(config, "RAM_POOL_GB", 40)
     assert config.ram_pool_gb() == 40                             # an explicit setting wins
+
+
+def test_page_asks_for_current_scripts():
+    from fastapi.testclient import TestClient
+    from app import main
+    r = TestClient(main.app).get("/")
+    assert r.headers["cache-control"] == "no-cache"
+    import re
+    v = re.findall(r'/static/app\.js\?v=([0-9a-f]+)', r.text)
+    assert v and f'/static/style.css?v={v[0]}' in r.text
