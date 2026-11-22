@@ -33,6 +33,24 @@ try:
         typed("#q", "all the mods"); typed("#nm", "atm10")
         pg.click("[data-t=plain]"); pg.wait_for_timeout(500); typed("#nm", "survival2")
         pg.click("[data-t=import]"); pg.wait_for_timeout(500); typed("#nm", "oldworld"); pg.click("#cbody details summary"); typed("#imv", "1.20.1")
+        # an upload keeps going, and stays visible, after the dialog is closed
+        held = []
+        pg.route("**/api/import*", lambda r: held.append(r))            # answered later, so the upload stays open
+        big = os.path.join(tmp, "world.zip"); open(big, "wb").write(os.urandom(4 << 20))
+        pg.set_input_files("#imf", big); pg.click("#mk"); pg.wait_for_timeout(300)
+        pg.keyboard.press("Escape"); pg.wait_for_timeout(300)
+        if not pg.is_visible("#uppill"):
+            failures.append("upload progress vanished when the dialog closed")
+        else:
+            pg.click("#uppill .upopen"); pg.wait_for_timeout(300)
+            if not pg.is_visible("#upw") or pg.is_visible("#uppill"):
+                failures.append("clicking the upload pill didn't bring back the dialog's progress")
+        pg.keyboard.press("Escape"); pg.wait_for_timeout(300)
+        for r in held:
+            r.fulfill(status=400, json={"detail": "test"})
+        pg.wait_for_timeout(500)
+        if pg.is_visible("#uppill"):
+            failures.append("upload pill stayed after the upload ended")
         pg.goto("http://localhost:8099/#/s/survival/mods"); pg.wait_for_timeout(800); typed("#mq", "jei")
         pg.goto("http://localhost:8099/#/s/survival/console"); pg.wait_for_timeout(800); typed("#cmd", "say hi")
         pg.goto("http://localhost:8099/#/s/survival/players"); pg.wait_for_timeout(800); typed("#pn", "Steve")

@@ -255,6 +255,13 @@ td select { height: 34px; width: auto; }
 .mtabs a.on { color: var(--ink); border-bottom-color: var(--acc); }
 .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--soft2); color: var(--ink);
   padding: 10px 16px; border-radius: 10px; z-index: 30; box-shadow: 0 8px 30px rgba(0, 0, 0, .4); max-width: 90vw; }
+.uppill { position: fixed; right: 20px; bottom: 20px; z-index: 25; display: flex; align-items: center; gap: 10px; width: min(380px, calc(100vw - 40px));
+  background: var(--card); border: 1px solid var(--line2); border-radius: 12px; padding: 10px 12px; box-shadow: 0 8px 30px rgba(0, 0, 0, .4); }
+.uppill .upopen { all: unset; flex: 1; min-width: 0; cursor: pointer; display: grid; gap: 3px; }
+.uppill .upopen:focus-visible { outline: 2px solid var(--acc); outline-offset: 4px; border-radius: 6px; }
+.uppill b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.uppill span { font-size: 12px; color: var(--mute); }
+.uppill .bar { margin-top: 3px; }
 .toast.err { background: var(--bad-bg); color: #FFC2CA; }
 
 /* ---------- smaller screens */

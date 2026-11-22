@@ -24,7 +24,7 @@ function toast(msg, err = false) {
 }
 async function act(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e) { toast(e.message, true); } }
 function modal(html) { $("#modal-card").innerHTML = html; $("#modal").classList.remove("hidden"); }
-function closeModal() { $("#modal").classList.add("hidden"); }
+function closeModal() { $("#modal").classList.add("hidden"); if (typeof drawUpload === "function") drawUpload(); }
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 function copy(text) { navigator.clipboard?.writeText(text); toast("Copied " + text); }
@@ -1364,33 +1364,73 @@ function drawImportTab() {
   const nm = $("#nm");
   nm.oninput = () => ($("#addrprev").textContent = (slug(nm.value) || "name") + "." + INFO.base_domain);
   $("#imf").onchange = () => { const f = $("#imf").files[0]; if (f && !nm.value) { nm.value = slug(f.name.replace(/\.(zip|tar\.gz|tgz|tar)$/i, "")).slice(0, 24); nm.oninput(); } };
+  if (UPLOAD) drawUpload();
   $("#mk").onclick = () => {
     const f = $("#imf").files[0];
     if (!f) return toast("Choose the server archive first", true);
+    if (UPLOAD) return toast("An upload is already running", true);
     const q = new URLSearchParams({ name: nm.value || "", filename: f.name, kind: $("#imk").value, mc_version: $("#imv").value.trim() });
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", "/api/import?" + q.toString());
-    xhr.setRequestHeader("Content-Type", "application/octet-stream");
-    $("#upw").classList.remove("hidden"); $("#mk").disabled = true;
-    const marks = [];                                    // speed over the last 10 seconds, not since the start
-    xhr.upload.onprogress = (e) => {
-      if (!e.lengthComputable) return;
-      const now = Date.now(); marks.push([now, e.loaded]); while (marks.length > 2 && now - marks[0][0] > 10000) marks.shift();
-      const [t0, b0] = marks[0], mbs = now > t0 ? (e.loaded - b0) / 2 ** 20 / ((now - t0) / 1000) : 0;
-      const pct = (e.loaded / e.total) * 100, left = mbs > 0 ? (e.total - e.loaded) / 2 ** 20 / mbs : 0;
-      const eta = left > 90 ? `about ${Math.round(left / 60)} min left` : left > 0 ? `${Math.round(left)} s left` : "";
-      $("#upb").style.width = pct.toFixed(1) + "%";
-      $("#upt").textContent = e.loaded >= e.total ? "Uploaded. Saving and checking the archive…"
-        : `Uploading ${(e.loaded / 2 ** 20).toFixed(0)} of ${(e.total / 2 ** 20).toFixed(0)} MB (${pct.toFixed(0)}%, ${mbs.toFixed(1)} MB/s${eta ? ", " + eta : ""})`;
-    };
-    xhr.onload = async () => {
-      let d = {}; try { d = JSON.parse(xhr.responseText); } catch {}
-      if (xhr.status >= 200 && xhr.status < 300) { closeModal(); await refreshList(); location.hash = "#/s/" + d.id; }
-      else { toast(d.detail || "Upload failed", true); $("#mk").disabled = false; $("#upw").classList.add("hidden"); }
-    };
-    xhr.onerror = () => { toast("Upload failed. Check your connection and try again.", true); $("#mk").disabled = false; };
-    xhr.send(f);
+    startUpload(f, q, nm.value || f.name);
   };
 }
+
+// The running upload lives outside the dialog: closing the dialog doesn't stop it, and a
+// small pill in the corner keeps showing its progress (click it to open the dialog again).
+let UPLOAD = null;
+function uploadText(u) {
+  if (u.loaded >= u.total) return "Uploaded. Saving and checking the archive…";
+  const eta = u.left > 90 ? `about ${Math.round(u.left / 60)} min left` : u.left > 0 ? `${Math.round(u.left)} s left` : "";
+  return `Uploading ${(u.loaded / 2 ** 20).toFixed(0)} of ${(u.total / 2 ** 20).toFixed(0)} MB (${u.pct.toFixed(0)}%, ${u.mbs.toFixed(1)} MB/s${eta ? ", " + eta : ""})`;
+}
+function showUploadIn() {                              // the dialog's own bar, when the import tab is open
+  const w = $("#upw"); if (!w || !UPLOAD) return false;
+  w.classList.remove("hidden"); $("#mk").disabled = true;
+  $("#upb").style.width = UPLOAD.pct.toFixed(1) + "%"; $("#upt").textContent = uploadText(UPLOAD);
+  return !$("#modal").classList.contains("hidden");
+}
+function drawUpload() {
+  let pill = $("#uppill");
+  const inDialog = showUploadIn();
+  if (!UPLOAD || inDialog) { pill?.remove(); return; }
+  if (!pill) {
+    pill = document.createElement("div"); pill.id = "uppill"; pill.className = "uppill";
+    pill.innerHTML = `<button class="upopen" title="Show the upload"><b></b><span></span><div class="bar slim"><i class="live"></i></div></button><button class="small upcancel">Cancel</button>`;
+    document.body.appendChild(pill);
+    pill.querySelector(".upopen").onclick = () => { createState = { tab: "import", source: "modrinth", pick: null }; drawCreate(); };
+    pill.querySelector(".upcancel").onclick = () => { if (UPLOAD && confirm(`Stop uploading ${UPLOAD.name}?`)) UPLOAD.xhr.abort(); };
+  }
+  pill.querySelector("b").textContent = UPLOAD.name;
+  pill.querySelector("span").textContent = uploadText(UPLOAD);
+  pill.querySelector("i").style.width = UPLOAD.pct.toFixed(1) + "%";
+}
+function startUpload(f, q, name) {
+  const xhr = new XMLHttpRequest();
+  xhr.open("PUT", "/api/import?" + q.toString());
+  xhr.setRequestHeader("Content-Type", "application/octet-stream");
+  const marks = [];                                    // speed over the last 10 seconds, not since the start
+  UPLOAD = { xhr, name, loaded: 0, total: f.size, pct: 0, mbs: 0, left: 0 };
+  drawUpload();
+  xhr.upload.onprogress = (e) => {
+    if (!e.lengthComputable || !UPLOAD) return;
+    const now = Date.now(); marks.push([now, e.loaded]); while (marks.length > 2 && now - marks[0][0] > 10000) marks.shift();
+    const [t0, b0] = marks[0], mbs = now > t0 ? (e.loaded - b0) / 2 ** 20 / ((now - t0) / 1000) : 0;
+    Object.assign(UPLOAD, { loaded: e.loaded, total: e.total, pct: (e.loaded / e.total) * 100, mbs, left: mbs > 0 ? (e.total - e.loaded) / 2 ** 20 / mbs : 0 });
+    drawUpload();
+  };
+  const finish = () => { UPLOAD = null; drawUpload(); const w = $("#upw"); if (w) { w.classList.add("hidden"); $("#mk").disabled = false; } };
+  xhr.onload = async () => {
+    let d = {}; try { d = JSON.parse(xhr.responseText); } catch {}
+    const open = !!$("#upw") && !$("#modal").classList.contains("hidden");
+    finish();
+    if (xhr.status >= 200 && xhr.status < 300) {
+      await refreshList();
+      if (open) { closeModal(); location.hash = "#/s/" + d.id; } else toast(`${name} uploaded. Setting it up now.`);
+    } else toast(d.detail || "Upload failed", true);
+  };
+  xhr.onerror = () => { finish(); toast("Upload failed. Check your connection and try again.", true); };
+  xhr.onabort = () => { finish(); toast("Upload stopped"); };
+  xhr.send(f);
+}
+window.addEventListener("beforeunload", (e) => { if (UPLOAD) { e.preventDefault(); e.returnValue = ""; } });
 
 boot();
