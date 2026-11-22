@@ -103,7 +103,7 @@ def explain(sid: str, log_lines: list[str], since: float | None = None, mods_dir
     since = since or (time.time() - 3600)
     base = base or dockerctl.server_dir(sid)
     mods_dir = mods_dir or os.path.join(base, "mods")
-    log = "\n".join(log_lines[-600:])
+    log = "\n".join(log_lines[-4000:])
     out = {"title": "", "detail": "", "mod": "", "jar": "", "report": "", "hint": ""}
 
     def done(title, detail="", mod="", hint=""):
@@ -173,8 +173,19 @@ def explain(sid: str, log_lines: list[str], since: float | None = None, mods_dir
         return done("The server ran out of memory", "Java ran out of heap space.", "",
                     "Give it more memory in Settings, or check for a mod or machine that keeps loading chunks.")
     if not text and "Done (" in log and "RCON running" not in log:
+        props = {}
+        try:
+            with open(os.path.join(base, "server.properties"), encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    k, _, v = line.strip().partition("=")
+                    if k.strip() in ("enable-rcon", "rcon.port") or (k.strip() == "rcon.password"):
+                        props[k.strip()] = "(set)" if k.strip() == "rcon.password" and v.strip() else v.strip()
+        except OSError:
+            props = {"server.properties": "missing"}
+        seen = ", ".join(f"{k}={v}" for k, v in sorted(props.items())) or "no RCON lines"
         return done("The server started, but SpawnPoint couldn't reach its console",
-                    "The game finished starting, but its remote console (RCON) never came up, so SpawnPoint couldn't tell it was ready.",
+                    "The game finished starting, but its remote console (RCON) never came up, so SpawnPoint couldn't tell it was ready. "
+                    f"server.properties has: {seen}.",
                     "", "SpawnPoint turns RCON back on in server.properties by itself; if this keeps happening, check that file for "
                     "enable-rcon=true and that no mod or plugin turns it off.")
     if text or "Exception" in log:

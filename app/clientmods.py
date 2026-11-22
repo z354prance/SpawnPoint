@@ -124,4 +124,4 @@ def autofix(s: dict, log_lines: list[str]) -> list[dict]:
 
 
 def crash_lines(sid: str) -> list[str]:
-    return dockerctl.recent_logs(sid, 600)
+    return dockerctl.recent_logs(sid, 4000)          # big packs log a thousand lines after "Done"

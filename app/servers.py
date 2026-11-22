@@ -805,7 +805,7 @@ async def start_failed(sid: str, message: str) -> None:
     """A start that didn't finish: say why, if the log or a crash report shows it."""
     from . import activity, alerts
     s = state.get(sid)
-    lines = await asyncio.to_thread(dockerctl.recent_logs, sid, 600)
+    lines = await asyncio.to_thread(dockerctl.recent_logs, sid, 4000)
     ex = await asyncio.to_thread(explain_crash, s, lines)
     if ex.get("title"):
         state.update(sid, last_crash={"at": time.time(), "reason": "didn't start", "explain": ex, "line": ""})
