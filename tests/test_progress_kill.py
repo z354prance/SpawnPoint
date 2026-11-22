@@ -11,24 +11,41 @@ def _setup(monkeypatch, tmp_path, srv):
 
 
 def test_install_progress_steps(tmp_path, monkeypatch):
-    s = {"id": "atm", "name": "atm", "phase": "installing", "loader": "neoforge", "pack": {"title": "ATM"},
-         "pregen": {"spawn_radius": 750, "percent": 0}}
+    # a modpack: installed without starting, tuned, then its one (first) start
+    s = {"id": "atm", "name": "atm", "kind": "modrinth", "phase": "installing", "loader": "neoforge", "pack": {"title": "ATM"},
+         "pregen": {"stage": "pending", "spawn_radius": 750, "percent": 0}}
     _setup(monkeypatch, tmp_path, s)
     os.makedirs(tmp_path / "atm" / "mods")
     for i in range(3):
         (tmp_path / "atm" / "mods" / f"m{i}.jar").write_bytes(b"x" * 2**20)
-    h = dockerctl.reset_hub("atm")
+    dockerctl.reset_hub("atm")
     g = servers.install_progress(s)
     assert (g["step"], g["percent"]) == (1, None) and "3 mods (3 MB)" in g["detail"]
-    h._push("[init] Starting the Minecraft server...")
-    assert servers.install_progress(s)["step"] == 2
     s.update(phase="preparing")
-    assert servers.install_progress(s)["step"] == 3
-    s.update(phase="pregen-spawn", pregen={"spawn_radius": 750, "percent": 62.0})
+    assert servers.install_progress(s)["label"] == "Tuning"
+    s.update(phase="pregen-spawn")
+    g = servers.install_progress(s)
+    assert (g["step"], g["label"]) == (3, "First start") and "3 mods" in g["detail"]
+    s.update(pregen={"stage": "spawn", "spawn_radius": 750, "percent": 62.0})
     g = servers.install_progress(s)
     assert (g["step"], g["percent"]) == (4, 62.0)
     s.update(phase="online")
     assert servers.install_progress(s) is None
+
+
+def test_install_progress_steps_paper(tmp_path, monkeypatch):
+    # Paper still installs by starting once: download, first start, tuning, spawn
+    s = {"id": "pp", "name": "pp", "kind": "paper", "phase": "installing", "loader": "paper",
+         "pregen": {"stage": "pending", "spawn_radius": 750, "percent": 0}}
+    _setup(monkeypatch, tmp_path, s)
+    h = dockerctl.reset_hub("pp")
+    assert servers.install_progress(s)["step"] == 1
+    h._push("[init] Starting the Minecraft server...")
+    assert servers.install_progress(s)["step"] == 2
+    s.update(phase="preparing")
+    assert servers.install_progress(s)["step"] == 3
+    s.update(phase="pregen-spawn", pregen={"stage": "spawn", "spawn_radius": 750, "percent": 62.0})
+    assert servers.install_progress(s)["step"] == 4
 
 
 def test_force_stop(tmp_path, monkeypatch):
