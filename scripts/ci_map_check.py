@@ -101,12 +101,12 @@ tiles = idx["dims"].get("overworld", [])
 print("overworld tiles:", len(tiles), "| dims:", {d: len(t) for d, t in idx["dims"].items()})
 assert tiles, "no overworld tiles"
 # the region holding spawn should be varied terrain, not one flat colour
-sx, sz = mapper.spawn_point("demo")
-rx, rz = sx // 512, sz // 512
+# the test generates land around 0,0 (a random world's spawn can be far from it)
+rx, rz = -1, -1
 img = np.asarray(Image.open(mapper.tile_path("demo", "overworld", "full", rx, rz)).convert("RGBA"))
 drawn = img[img[..., 3] > 0][:, :3]
 uniq = len(np.unique(drawn // 8, axis=0))
-print(f"spawn region r.{rx}.{rz}: {len(drawn)} pixels drawn, {uniq} distinct colours, mean {drawn.mean(axis=0).round()}")
+print(f"generated region r.{rx}.{rz}: {len(drawn)} pixels drawn, {uniq} distinct colours, mean {drawn.mean(axis=0).round()}")
 small = Image.open(mapper.tile_path("demo", "overworld", "small", rx, rz)); assert small.size == (64, 64)
 
 # stitch every overworld tile into one picture and print it, to compare by eye
@@ -120,7 +120,7 @@ crop = canvas.crop(Image.fromarray(np.asarray(canvas)[..., :3].sum(axis=2).astyp
 buf = io.BytesIO(); crop.save(buf, "PNG", optimize=True)
 print("PREVIEW", crop.size, base64.b64encode(buf.getvalue()).decode())
 
-assert len(drawn) > 10000 and uniq > 40, "the spawn region looks blank or flat"
+assert len(drawn) > 10000 and uniq > 40, "the generated region looks blank or flat"
 assert not mapper.due(state.get("demo")), "an unchanged world shouldn't render again"
 assert topology.allocator().burst == {} and "map:demo" not in topology.allocator().home, "cores not returned"
 

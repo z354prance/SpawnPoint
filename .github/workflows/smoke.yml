@@ -89,7 +89,7 @@ jobs:
             for y in $((top+3)) $((top+2)) $((top+1)) $top; do
               docker exec gen rcon-cli "execute unless block $1 $y $2 #minecraft:air" | grep -q "passed" || continue
               b=unknown
-              for n in snow snow_block powder_snow grass_block dirt podzol stone deepslate granite diorite andesite sand gravel water ice packed_ice blue_ice spruce_leaves oak_leaves birch_leaves short_grass tall_grass fern spruce_log oak_log clay mud coarse_dirt terracotta calcite tuff; do
+              for n in snow snow_block powder_snow grass_block dirt podzol stone deepslate granite diorite andesite sand gravel water ice packed_ice blue_ice spruce_leaves oak_leaves birch_leaves short_grass tall_grass fern spruce_log oak_log clay mud coarse_dirt terracotta calcite tuff mycelium moss_block mud red_sand; do
                 docker exec gen rcon-cli "execute if block $1 $y $2 minecraft:$n" | grep -q "passed" && { b=$n; break; }
               done
               echo "$1 $y $2 $b" | tee -a /tmp/mapci/truth.txt; break
