@@ -46,6 +46,8 @@ window.GUIDE = [
       <li><b>Full screen:</b> the corner button. Esc closes it.</li>
       <li>The map updates by itself every few minutes when the world changes. <b>Update map</b> redraws the whole map from scratch, straight away.</li>
       <li><b>Sharing:</b> a moderator can turn on a <b>public map</b> link in Settings, so anyone can look at the map without an account.</li>
+      <li><b>Markers:</b> moderators press <b>Add marker</b>, then click the map to name a base, farm or portal. Click a marker to rename, recolour or remove it. Markers show on the public map too, unless you untick that for one.</li>
+      <li><b>Activity</b> shades where players spend their time, from where they've been over the past days and weeks.</li>
     </ul>` },
 
   { id: "pregen", title: "Pre-generation", role: "viewer", body: `
@@ -62,6 +64,7 @@ window.GUIDE = [
       <li><b>Players tab:</b> see who's on, kick someone, make someone an operator, ban someone, and turn on <b>invite only</b> (a whitelist): then only the players you add can join.</li>
       <li><b>Shared invite list</b> (optional): one list of trusted players that any server can use. Turn it on per server in its Players tab, and untick anyone who shouldn't be on that particular server. <b>Edit shared list</b> adds people, or imports a server's whitelist in one go. Servers keep their own whitelist entries too: the shared list only adds and removes the names it put there.</li>
       <li><b>Console tab:</b> the server's live log, and a box to run commands (without the slash), like <span class="mono">say hello</span> or <span class="mono">time set day</span>.</li>
+      <li><b>Everyone who has played</b> (bottom of the Players tab): playtime, number of visits, first and last seen, and where each player usually is. Click the coordinates to see the spot on the map.</li>
       <li><b>Hunting lag:</b> run <span class="mono">spark profiler start</span>, play for a couple of minutes, then <span class="mono">spark profiler stop</span>. It gives you a link to a report that shows exactly what's slow.</li>
     </ul>` },
 
@@ -69,6 +72,7 @@ window.GUIDE = [
     <ul>
       <li><b>Mods tab:</b> search and add single mods or plugins. The search only shows ones that fit the server's loader and version, and warns you when players need the mod too.</li>
       <li>SpawnPoint adds a few <b>helper mods</b> by itself (for speed and pre-generation), and turns off <b>client-only mods</b> that would crash a server. Players can still use those in their own game.</li>
+      <li><b>Mod updates</b> (servers without a modpack): the Mods tab checks once a day which mods and plugins have newer builds for your Minecraft version, and updates one or all of them. <b>Undo that update</b> puts the previous files back. Files that didn't come from Modrinth can't be checked.</li>
       <li><b>Modpack updates:</b> a modpack stays on its version until you update it, so restarts never change it. When there's a new version, <b>Settings → Modpack</b> shows <b>Update</b>. Updating backs up first, then restarts. If something breaks, <b>Roll back</b> puts the world and mods back to just before the update.</li>
     </ul>` },
 
@@ -76,6 +80,8 @@ window.GUIDE = [
     <ul>
       <li><b>Sleep</b> after a number of empty minutes, to free memory. Joining wakes it.</li>
       <li><b>Restart after a crash</b>: on by default.</li>
+      <li><b>Minecraft version</b> (servers without a modpack): pick a newer version and press <b>Check</b> to see which mods have a build for it. <b>Upgrade</b> backs up, then starts a copy of the server on the new version while the real one keeps running. Only if the copy starts cleanly is the server switched over; if it doesn't, nothing changes and you're told why. <b>Roll back</b> returns to the old version and world.</li>
+      <li><b>Discord chat:</b> connect the server's chat to a Discord channel. A channel webhook sends chat, joins, deaths and advancements to Discord. To show Discord messages in game too, an admin adds a Discord bot once (the card explains how) and you paste the channel's ID.</li>
       <li><b>Memory:</b> sized automatically from the number of mods. The server starts small, stays around its normal size, grows when it needs more and hands memory back when it's quiet.</li>
       <li><b>Public map</b> and <b>Bedrock players</b>: see their own sections.</li>
       <li><b>server.properties</b>: difficulty, game mode, view distance and everything else Minecraft lets you set. Most changes need a restart.</li>
@@ -104,7 +110,7 @@ window.GUIDE = [
 
   { id: "trouble", title: "When something goes wrong", role: "viewer", body: `
     <ul>
-      <li><b>It says "error" or didn't start:</b> open the Console and look at the last red lines. The most common causes are a mod that needs another mod, or one that doesn't match the Minecraft version.</li>
+      <li><b>It crashed or didn't start:</b> the Console tab shows what went wrong in plain words above the log, with the mod it points at, a way to turn that mod off and a link to the full crash report. Alerts and the activity log say the same. The most common causes are a mod that needs another mod, or one that doesn't match the Minecraft version.</li>
       <li><b>Lag or rubberbanding:</b> check the Stats tab. If the slowest ticks are over 50 ms, run a spark report (see Players and the console) to find the cause.</li>
       <li><b>The disk is nearly full:</b> a banner says so, and backups, pre-generation and map drawing pause until there's room. Delete old backups or worlds you don't need.</li>
       <li><b>Can't join at all:</b> check the address, that the server is online, and, for friends outside your home, that the address points to your connection.</li>

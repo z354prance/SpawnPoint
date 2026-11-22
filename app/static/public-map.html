@@ -61,6 +61,18 @@ function fit() {
   const sp = dim === "overworld" && info.spawn;
   view = { x: sp ? info.spawn.x : (b[0] + b[2]) / 2, z: sp ? info.spawn.z : (b[1] + b[3]) / 2, ppb: Math.max(ppb, 0.02), min: ppb * 0.6 };
 }
+function drawPin(x, px, pz, color, name, hot) {
+  x.save();
+  x.beginPath(); x.moveTo(px, pz); x.bezierCurveTo(px - 3, pz - 6, px - 8, pz - 9, px - 8, pz - 15);
+  x.arc(px, pz - 15, 8, Math.PI, 0); x.bezierCurveTo(px + 8, pz - 9, px + 3, pz - 6, px, pz); x.closePath();
+  x.fillStyle = color; x.fill(); x.lineWidth = hot ? 2.5 : 1.5; x.strokeStyle = "rgba(10,12,16,.85)"; x.stroke();
+  x.beginPath(); x.arc(px, pz - 15, 3, 0, Math.PI * 2); x.fillStyle = "rgba(10,12,16,.75)"; x.fill();
+  if (name) {
+    x.font = "600 12px Geist, Inter, system-ui, sans-serif"; x.textBaseline = "middle"; x.textAlign = "left";
+    x.lineWidth = 3; x.strokeStyle = "rgba(0,0,0,.75)"; x.fillStyle = "#fff"; x.strokeText(name, px + 11, pz - 15); x.fillText(name, px + 11, pz - 15);
+  }
+  x.restore();
+}
 function draw() {
   if (!info || !view) return;
   const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
@@ -84,6 +96,10 @@ function draw() {
     x.beginPath(); x.moveTo(hx - 6, hz - 0.5); x.lineTo(hx, hz - 6); x.lineTo(hx + 6, hz - 0.5);
     x.moveTo(hx - 4.5, hz - 1.5); x.lineTo(hx - 4.5, hz + 5.5); x.lineTo(hx + 4.5, hz + 5.5); x.lineTo(hx + 4.5, hz - 1.5);
     x.strokeStyle = "#FF9D4A"; x.lineWidth = 1.6; x.lineJoin = "round"; x.stroke();
+  }
+  for (const m of (info.markers || []).filter((m) => m.dim === dim)) {
+    const [mx, mz] = at(m.x + 0.5, m.z + 0.5);
+    if (mx > -200 && mx < w + 20 && mz > -20 && mz < h + 40) drawPin(x, mx, mz, m.color, view.ppb > 0.025 ? m.name : "");
   }
   x.font = "600 12px system-ui, sans-serif"; x.textBaseline = "middle";
   for (const p of players.filter((p) => p.dim === dim)) {

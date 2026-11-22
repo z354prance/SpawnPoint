@@ -401,7 +401,7 @@ async def provision(sid: str) -> None:
     try:
         set_phase(sid, "installing", "Downloading server / modpack (big packs can take a while)")
         if not await boot_ready(sid, config.INSTALL_TIMEOUT_S):
-            set_phase(sid, "error", "Server didn't finish starting. Check the console.")
+            await start_failed(sid, "Server didn't finish starting. Check the console.")
             return
         set_phase(sid, "preparing", "Adding performance helpers and tuning")
         await asyncio.to_thread(dockerctl.get_container(sid).stop, timeout=120)
@@ -501,7 +501,7 @@ async def start(sid: str) -> dict:
                 state.update(sid, pack_pending=False)
                 await go_online(sid)
             else:
-                set_phase(sid, "error", "Didn't start in time. Check the console.")
+                await start_failed(sid, "Didn't start in time. Check the console.")
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -700,6 +700,38 @@ def _crash_reason(sid: str, info: dict, lines: list[str]) -> str | None:
     return None
 
 
+def explain_crash(s: dict, lines: list[str]) -> dict:
+    """crashinfo.explain for this server, from its last start onwards."""
+    from . import crashinfo
+    try:
+        return crashinfo.explain(s["id"], lines, since=(s.get("last_start") or {}).get("at"), mods_dir=mods_dir(s))
+    except Exception as e:                                   # never let the explainer hide the crash itself
+        log.debug("crash explain failed: %s", e)
+        return {}
+
+
+def _plain(ex: dict) -> str:
+    if not ex or not ex.get("title"):
+        return ""
+    who = f" (mod: {ex['mod']}" + (f", file {ex['jar']}" if ex.get("jar") else "") + ")" if ex.get("mod") else ""
+    return f"{ex['title']}{who}. {ex.get('detail', '')} {ex.get('hint', '')}".strip()
+
+
+async def start_failed(sid: str, message: str) -> None:
+    """A start that didn't finish: say why, if the log or a crash report shows it."""
+    from . import activity, alerts
+    s = state.get(sid)
+    lines = await asyncio.to_thread(dockerctl.recent_logs, sid, 600)
+    ex = await asyncio.to_thread(explain_crash, s, lines)
+    if ex.get("title"):
+        state.update(sid, last_crash={"at": time.time(), "reason": "didn't start", "explain": ex, "line": ""})
+        message = f"{message.rstrip('.')}: {ex['title'].lower()}" + (f" ({ex['mod']})" if ex.get("mod") else "") + \
+            ". Details are above the console."
+        activity.record("SpawnPoint", "system", "", "server.crash", sid, _plain(ex)[:500], False)
+        alerts.send("crash_gave_up", s.get("name", sid), f"{s.get('name', sid)} didn't start", _plain(ex), "bad")
+    set_phase(sid, "error", message)
+
+
 async def check_crash(sid: str) -> None:
     """Called by the stats loop for servers marked online whose container isn't running.
     SpawnPoint's own stops change the phase first, so this only sees exits nobody asked for."""
@@ -720,12 +752,14 @@ async def check_crash(sid: str) -> None:
     last = next((l.strip() for l in reversed(lines) if l.strip() and ("ERROR" in l or "Exception" in l or "crash" in l.lower())), "")
     now = time.time()
     recent = [t for t in s.get("crashes", []) if now - t < CRASH_WINDOW_S] + [now]
-    state.update(sid, crashes=recent, last_crash={"at": now, "reason": reason, "line": last[:300]})
+    ex = await asyncio.to_thread(explain_crash, s, lines)
+    state.update(sid, crashes=recent, last_crash={"at": now, "reason": reason, "line": last[:300], "explain": ex})
     log.warning("[%s] %s: %s", sid, reason, last[:200])
-    activity.record("SpawnPoint", "system", "", "server.crash", sid, f"{reason}. {last}"[:500], False)
+    plain = _plain(ex)
+    activity.record("SpawnPoint", "system", "", "server.crash", sid, (f"{reason}. {plain}" if plain else f"{reason}. {last}")[:500], False)
     from . import alerts
     name = s.get("name", sid)
-    detail = f"Reason: {reason}." + (f"\nLast error: `{last[:300]}`" if last else "")
+    detail = f"Reason: {reason}." + (f"\n{plain}" if plain else "") + (f"\nLast error: `{last[:300]}`" if last and not plain else "")
     if not s.get("auto_restart", True):
         set_phase(sid, "error", f"The server {reason}. Automatic restart is off. Check the console.")
         alerts.send("crash_gave_up", name, f"{name} crashed", detail + "\nAutomatic restart is off, so it's stopped.", "bad")

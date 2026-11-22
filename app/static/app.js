@@ -423,6 +423,8 @@ function drawMapHead(s) {
     <div class="row" style="flex-wrap:wrap;justify-content:flex-end">${ctl}
       ${ready && dim === "overworld" && hasGen(s) ? `<button class="small ${ov ? "toggled" : ""}" data-overlay aria-pressed="${ov}" title="Show or hide the spawn area, generated land and the edge being generated">Generation</button>` : ""}
       ${dims.length > 1 ? `<label for="mdim" class="sr">Dimension</label><select id="mdim" style="width:auto;height:36px">${dims.map((d) => `<option value="${d}" ${d === dim ? "selected" : ""}>${DIMNAME[d] || d}</option>`).join("")}</select>` : ""}
+      ${ready ? `<button class="small ${HEATON ? "toggled" : ""}" data-heat aria-pressed="${HEATON}" title="Where players spend their time">Activity</button>` : ""}
+      ${ready && can("moderator") ? `<button class="small ${PLACING ? "toggled" : ""}" data-mark aria-pressed="${!!PLACING}" title="Click the map to place a marker">${PLACING ? "Click the map…" : "Add marker"}</button>` : ""}
       ${can("moderator") && mapperOn(s) ? `<button class="small" data-render title="Redraw the whole map now">Update map</button>` : ""}
       <button class="ic" data-full aria-pressed="${!!full}" aria-label="${full ? "Close the full-screen map" : "Show the map full screen"}" title="${full ? "Close full screen (Esc)" : "Full screen"}">${full ? "✕" : ICON_EXPAND}</button></div></div>
     <div class="sub">${esc(g.label)}</div>
@@ -430,6 +432,8 @@ function drawMapHead(s) {
     ${st ? `<div class="sub" style="margin-top:4px">${esc(st)}</div>` : ""}`;
   $$("[data-pg]", $("#mhead")).forEach((b) => (b.onclick = async () => { b.disabled = true; await act(() => api(`/servers/${s.id}/action/${b.dataset.pg}`, { method: "POST" })); refreshList(); }));
   $("[data-overlay]", $("#mhead")) && ($("[data-overlay]", $("#mhead")).onclick = () => { setOverlay(!overlayOn()); drawMapHead(s); });
+  $("[data-heat]", $("#mhead")) && ($("[data-heat]", $("#mhead")).onclick = () => toggleHeat(s));
+  $("[data-mark]", $("#mhead")) && ($("[data-mark]", $("#mhead")).onclick = () => { PLACING = PLACING ? null : true; drawMapHead(s); if ($("#map")) $("#map").style.cursor = PLACING ? "crosshair" : "grab"; });
   $("#mdim") && ($("#mdim").onchange = (e) => { MAPDIM[s.id] = e.target.value; delete VIEWS[s.id + "/" + e.target.value]; drawMapHead(s); drawMap(); });
   $("[data-render]", $("#mhead")) && ($("[data-render]", $("#mhead")).onclick = () => act(() => api(`/servers/${s.id}/map/render`, { method: "POST" }), "Redrawing the whole map: it starts within a minute"));
   $("[data-full]", $("#mhead")).onclick = () => toggleFullMap();
@@ -439,7 +443,8 @@ function drawMapHead(s) {
     ${g.active ? `<span><i style="background:${g.paused ? "#8A5A3C" : "#FF5A2B"}"></i>${g.paused ? "Paused" : "Generating now"}</span>` : ""}${ready ? "" : `<span><i style="background:#2A2F38"></i>Not generated yet</span>`}
     ${g.stage === "background" || (g.stage === "done" && !g.spawnOnly) ? `<span><i class="ring" style="border-color:#7D8593"></i>${g.R.toLocaleString()}-block limit</span>` : ""}` : ""}
     ${dim === "overworld" ? `<span><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="vertical-align:-1px;margin-right:6px"><path d="M1.5 6 6 1.5 10.5 6M3 5v5.5h6V5M5 10.5V8h2v2.5" fill="none" stroke="#FF9D4A" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></svg>World spawn</span>` : ""}
-    ${s.phase === "online" && s.stats?.online ? `<span><i class="dot"></i>Players</span>` : ""}`;
+    ${s.phase === "online" && s.stats?.online ? `<span><i class="dot"></i>Players</span>` : ""}
+    ${HEATON ? `<span><i style="background:rgba(255,110,60,.85)"></i>Where players spend time</span>` : ""}`;
 }
 const mapperOn = (s) => !!(s.map_ready || s.map?.status);
 // Only servers that pre-generate have generation progress to show; vanilla (and packs where
@@ -539,12 +544,30 @@ function tileImage(url) {
 function panZoom(cv) {
   let drag = null;
   const cur = () => { const s = LIST.find((x) => x.id === SEL); return s && VIEWS[s.id + "/" + (MAPDIM[s.id] || "overworld")]; };
-  cv.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; });
+  let moved = 0;
+  cv.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY }; moved = 0; cv.setPointerCapture(e.pointerId); cv.style.cursor = "grabbing"; });
   cv.addEventListener("pointermove", (e) => {
-    const v = cur(); if (!drag || !v) return;
+    const v = cur();
+    if (!drag || !v) {                                       // hovering: point at markers
+      const s = LIST.find((x) => x.id === SEL); if (!s || !v) return;
+      const r = cv.getBoundingClientRect();
+      cv.style.cursor = PLACING ? "crosshair" : markerAt(s, MAPDIM[s.id] || "overworld", e.clientX - r.left, e.clientY - r.top, r.width, r.height, v) ? "pointer" : "grab";
+      return;
+    }
+    moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
     v.x -= (e.clientX - drag.x) / v.ppb; v.z -= (e.clientY - drag.y) / v.ppb; drag = { x: e.clientX, y: e.clientY }; drawMap();
   });
-  const end = () => { drag = null; cv.style.cursor = "grab"; };
+  const end = (e) => {
+    const click = drag && moved < 5 && e.type === "pointerup";
+    drag = null; cv.style.cursor = PLACING ? "crosshair" : "grab";
+    if (!click) return;
+    const s = LIST.find((x) => x.id === SEL), v = cur(); if (!s || !v) return;
+    const r = cv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top, dim = MAPDIM[s.id] || "overworld";
+    const wx = Math.floor(v.x + (sx - r.width / 2) / v.ppb), wz = Math.floor(v.z + (sy - r.height / 2) / v.ppb);
+    if (PLACING) { PLACING = null; drawMapHead(s); markerModal(s, { dim, x: wx, z: wz }); return; }
+    const m = markerAt(s, dim, sx, sy, r.width, r.height, v);
+    if (m) markerModal(s, m);
+  };
   cv.addEventListener("pointerup", end); cv.addEventListener("pointercancel", end);
   cv.addEventListener("wheel", (e) => {                         // zoom around the pointer
     e.preventDefault(); const v = cur(); if (!v) return;
@@ -567,6 +590,66 @@ function sizeCanvas(cv) {
   const box = cv.parentElement, w = box.clientWidth, h = box.clientHeight, dpr = window.devicePixelRatio || 1;
   if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
   return { w, h, dpr };
+}
+function drawPin(x, px, pz, color, name, hot) {
+  x.save();
+  x.beginPath(); x.moveTo(px, pz); x.bezierCurveTo(px - 3, pz - 6, px - 8, pz - 9, px - 8, pz - 15);
+  x.arc(px, pz - 15, 8, Math.PI, 0); x.bezierCurveTo(px + 8, pz - 9, px + 3, pz - 6, px, pz); x.closePath();
+  x.fillStyle = color; x.fill(); x.lineWidth = hot ? 2.5 : 1.5; x.strokeStyle = "rgba(10,12,16,.85)"; x.stroke();
+  x.beginPath(); x.arc(px, pz - 15, 3, 0, Math.PI * 2); x.fillStyle = "rgba(10,12,16,.75)"; x.fill();
+  if (name) {
+    x.font = "600 12px Geist, Inter, system-ui, sans-serif"; x.textBaseline = "middle"; x.textAlign = "left";
+    x.lineWidth = 3; x.strokeStyle = "rgba(0,0,0,.75)"; x.fillStyle = "#fff"; x.strokeText(name, px + 11, pz - 15); x.fillText(name, px + 11, pz - 15);
+  }
+  x.restore();
+}
+let PLACING = null, HEAT = {}, HEATON = false;
+function markerAt(s, dim, sx, sy, w, h, v) {
+  let best = null, bd = 14;
+  for (const m of (MAPIDX[s.id]?.markers || []).filter((m) => m.dim === dim)) {
+    const px = w / 2 + (m.x + 0.5 - v.x) * v.ppb, pz = h / 2 + (m.z + 0.5 - v.z) * v.ppb;
+    const d = Math.hypot(sx - px, sy - (pz - 14));
+    if (d < bd) { bd = d; best = m; }
+  }
+  return best;
+}
+const MARKER_COLORS = ["#FF9D4A", "#5B8DEF", "#22C55E", "#E879F9", "#F5A524", "#F87171", "#E9ECF1"];
+// A marker: view it (anyone), or add, rename, recolour, move to the public map or remove it (moderators).
+function markerModal(s, m) {
+  const edit = can("moderator"), isNew = !m.id;
+  const color = m.color || MARKER_COLORS[(MAPIDX[s.id]?.markers || []).length % MARKER_COLORS.length];
+  if (!edit) {
+    modal(`<h2>${esc(m.name)}</h2><p class="muted mono">${DIMNAME[m.dim] || m.dim}: ${m.x}, ${m.z}</p>${m.by ? `<p class="sub">Added by ${esc(m.by)}</p>` : ""}
+      <div class="row" style="justify-content:flex-end"><button class="small" id="mkcp">Copy coordinates</button><button onclick="closeModal()">Close</button></div>`);
+    $("#mkcp").onclick = () => copy(`${m.x} ~ ${m.z}`); return;
+  }
+  modal(`<h2>${isNew ? "Add a marker" : "Marker"}</h2>
+    <label for="mkn">Name</label><input id="mkn" maxlength="40" value="${esc(m.name || "")}" placeholder="Like Main base or Nether hub">
+    <div class="row" style="flex-wrap:nowrap;gap:10px"><div style="flex:1"><label for="mkx">X</label><input id="mkx" type="number" value="${m.x}"></div>
+      <div style="flex:1"><label for="mkz">Z</label><input id="mkz" type="number" value="${m.z}"></div></div>
+    <div class="sub" style="margin-top:10px">Colour</div>
+    <div class="row" role="radiogroup" aria-label="Colour" style="gap:8px;margin-top:6px">${MARKER_COLORS.map((c) => `<button type="button" class="swatch ${c === color ? "on" : ""}" role="radio" aria-checked="${c === color}" data-c="${c}" style="background:${c}" aria-label="Colour ${c}"></button>`).join("")}</div>
+    <label class="row" style="color:var(--ink);margin-top:12px"><input type="checkbox" id="mkp" ${m.public === false ? "" : "checked"}> Show on the public map</label>
+    <div class="row" style="justify-content:space-between;margin-top:16px">${isNew ? "<span></span>" : `<button class="danger" id="mkd">Remove</button>`}
+      <div class="row"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" id="mks">${isNew ? "Add marker" : "Save"}</button></div></div>`);
+  let pick = color;
+  $$(".swatch").forEach((b) => (b.onclick = () => { pick = b.dataset.c; $$(".swatch").forEach((x) => { x.classList.toggle("on", x === b); x.setAttribute("aria-checked", x === b); }); }));
+  setTimeout(() => $("#mkn").focus(), 30);
+  const save = async () => {
+    const body = { name: $("#mkn").value, dim: m.dim, x: parseInt($("#mkx").value, 10), z: parseInt($("#mkz").value, 10), color: pick, public: $("#mkp").checked };
+    const r = await act(() => api(`/servers/${s.id}/markers${isNew ? "" : "/" + m.id}`, { method: isNew ? "POST" : "PUT", body }), isNew ? "Marker added" : "Marker saved");
+    if (r) { closeModal(); loadMapIndex(s.id); }
+  };
+  $("#mks").onclick = save;
+  $("#mkn").onkeydown = (e) => { if (e.key === "Enter") save(); };
+  $("#mkd") && ($("#mkd").onclick = async () => {
+    if (await act(() => api(`/servers/${s.id}/markers/${m.id}`, { method: "DELETE" }), "Marker removed")) { closeModal(); loadMapIndex(s.id); }
+  });
+}
+async function toggleHeat(s) {
+  HEATON = !HEATON;
+  if (HEATON) for (const d of mapDims(s)) HEAT[s.id + "/" + d] = await api(`/servers/${s.id}/map/heat?dim=${d}`).catch(() => null);
+  drawMapHead(s); drawMap();
 }
 function drawMap() {
   const s = LIST.find((x) => x.id === SEL), cv = $("#map"); if (!s || !cv) return;
@@ -609,6 +692,25 @@ function drawMap() {
       x.moveTo(hx - 1.5, hz + 5.5); x.lineTo(hx - 1.5, hz + 2); x.lineTo(hx + 1.5, hz + 2); x.lineTo(hx + 1.5, hz + 5.5);
       x.strokeStyle = "#FF9D4A"; x.lineWidth = 1.6; x.lineJoin = "round"; x.lineCap = "round"; x.stroke();
     }
+  }
+  // where people spend time
+  const hm = HEATON && HEAT[s.id + "/" + dim];
+  if (hm && hm.cells.length) {
+    x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const top = Math.log(1 + Math.max(...hm.cells.map((c) => c[2]))), sz = hm.cell * v.ppb;
+    for (const [cx, cz, n] of hm.cells) {
+      const px = w / 2 + (cx * hm.cell - v.x) * v.ppb, pz = h / 2 + (cz * hm.cell - v.z) * v.ppb;
+      if (px > w || pz > h || px + sz < 0 || pz + sz < 0) continue;
+      const a = 0.18 + 0.6 * Math.log(1 + n) / top;
+      x.fillStyle = `rgba(255,${Math.round(190 - 150 * Math.log(1 + n) / top)},60,${a.toFixed(2)})`;
+      x.fillRect(px, pz, Math.max(sz, 2), Math.max(sz, 2));
+    }
+  }
+  // markers
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  for (const m of (MAPIDX[s.id]?.markers || []).filter((m) => m.dim === dim)) {
+    const px = w / 2 + (m.x + 0.5 - v.x) * v.ppb, pz = h / 2 + (m.z + 0.5 - v.z) * v.ppb;
+    if (px > -200 && px < w + 20 && pz > -20 && pz < h + 40) drawPin(x, px, pz, m.color, v.ppb > 0.025 ? m.name : "");
   }
   // players
   const ps = (PLAYERS[s.id] || []).filter((p) => p.dim === dim);
@@ -671,11 +773,41 @@ function drawRail() {
   ({ console: tabConsole, mods: tabMods, players: tabPlayers, settings: tabSettings, files: tabFiles, backups: tabBackups, schedule: tabSchedule, performance: tabPerf }[TAB])(SEL, s);
 }
 
+// The last crash, or failed start, in plain words, above the console until dismissed.
+function crashCard(s) {
+  const c = s.last_crash, ex = c?.explain;
+  if (!ex?.title || Date.now() / 1000 - c.at > 7 * 86400) return "";
+  try { if (localStorage.getItem("sp-crash-seen-" + s.id) === String(c.at)) return ""; } catch {}
+  return `<div class="crashcard" id="crashcard" role="status">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;gap:12px">
+      <div><b>${esc(ex.title)}</b> <span class="sub">${ago(c.at)}</span></div>
+      <button class="ic small" id="crashx" aria-label="Dismiss" title="Dismiss">✕</button></div>
+    ${ex.detail ? `<p>${esc(ex.detail)}</p>` : ""}
+    ${ex.mod ? `<p class="sub">Points at: <b>${esc(ex.mod)}</b>${ex.jar ? ` <span class="mono">(${esc(ex.jar)})</span>` : ""}</p>` : ""}
+    ${ex.hint ? `<p class="sub">${esc(ex.hint)}</p>` : ""}
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      ${ex.report && can("moderator") ? `<button class="small" id="crashopen">Open the crash report</button>` : ""}
+      ${ex.jar && can("moderator") ? `<button class="small" id="crashoff">Turn off ${esc(ex.jar)}</button>` : ""}
+    </div></div>`;
+}
+let FILES_AT = null;
+
 function tabConsole(sid) {
+  const sv = LIST.find((x) => x.id === sid) || {};
   $("#tab").classList.add("fill");
-  $("#tab").innerHTML = `<div class="console" id="con" role="log" aria-live="off"></div>
+  $("#tab").innerHTML = `${crashCard(sv)}<div class="console" id="con" role="log" aria-live="off"></div>
     ${can("moderator") ? `<form id="cf" class="cmdrow"><label for="cmd" class="sr">Console command</label><input id="cmd" placeholder="Type a command, like say hello" autocomplete="off"><button class="primary">Send</button></form>` : ""}`;
   const con = $("#con");
+  if ($("#crashcard")) {
+    const ex = sv.last_crash.explain;
+    $("#crashx").onclick = () => { try { localStorage.setItem("sp-crash-seen-" + sid, String(sv.last_crash.at)); } catch {} $("#crashcard").remove(); };
+    $("#crashopen") && ($("#crashopen").onclick = () => { FILES_AT = ex.report; location.hash = `#/s/${sid}/files`; });
+    $("#crashoff") && ($("#crashoff").onclick = async () => {
+      if (!confirm(`Turn off ${ex.jar}? It is renamed so the server skips it; you can turn it back on in the Mods tab.`)) return;
+      if (await act(() => api(`/servers/${sid}/mods/file`, { method: "POST", body: { filename: ex.jar, action: "disable" } }), `${ex.jar} turned off. Start the server again.`))
+        $("#crashx").click();
+    });
+  }
   es = new EventSource(`/api/servers/${sid}/console`);
   es.onmessage = (e) => {
     const stick = con.scrollTop + con.clientHeight >= con.scrollHeight - 30;
@@ -695,6 +827,40 @@ function tabConsole(sid) {
   };
 }
 
+// Updates for mods and plugins that came from Modrinth (plain servers; packs pick their own).
+async function drawModUpdates(sid, mod, d) {
+  const box = $("#mupd"); if (!box) return;
+  d = d || await api(`/servers/${sid}/mod-updates`).catch(() => null);
+  if (!d || !d.supported) { box.innerHTML = ""; return; }
+  const items = d.items || [], rb = d.rollback;
+  const when = d.checked ? `checked ${ago(d.checked)}` : "not checked yet";
+  box.innerHTML = `<div class="card" style="display:grid;gap:8px">
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><h4 style="margin:0">Updates</h4>
+      <div class="row" style="gap:8px">${mod ? `<button class="small" id="mucheck">Check now</button>` : ""}
+      ${mod && items.length ? `<button class="small primary" id="muall">Update all (${items.length})</button>` : ""}</div></div>
+    <div class="sub">${items.length ? `${items.length} can be updated` : d.checked ? "Everything from Modrinth is up to date" : "SpawnPoint checks once a day"}, ${when}.${d.unknown ? ` ${d.unknown} of ${d.total} file(s) aren't from Modrinth, so they can't be checked.` : ""}</div>
+    ${items.length ? `<div class="list">${items.map((i) => `<div class="item"><div class="grow"><div class="t">${esc(i.title)}</div>
+      <div class="d mono">${esc(i.current)} → ${esc(i.latest)}</div></div>
+      ${mod ? `<button class="small" data-mu="${esc(i.file)}">Update</button>` : ""}</div>`).join("")}</div>` : ""}
+    ${rb ? `<div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap"><div class="sub">Last update ${ago(rb.at)}: ${rb.swaps.map((x) => `${esc(x.title)} ${esc(x.from)} → ${esc(x.to)}`).join(", ")}.</div>
+      ${mod ? `<button class="small" id="murb">Undo that update</button>` : ""}</div>` : ""}
+  </div>`;
+  const run = async (files, label) => {
+    const r = await act(() => api(`/servers/${sid}/mod-updates/update`, { method: "POST", body: { files } }));
+    if (!r) return;
+    toast(r.failed?.length ? `Updated ${r.updated.length}; ${r.failed.length} failed: ${r.failed.map((f) => f.title).join(", ")}` : `${label}. Restart the server to use the new version${r.updated.length > 1 ? "s" : ""}.`, !!r.failed?.length);
+    tabMods(sid, LIST.find((x) => x.id === sid));
+  };
+  $("#mucheck") && ($("#mucheck").onclick = async (e) => { e.target.disabled = true; e.target.textContent = "Checking…"; const r = await act(() => api(`/servers/${sid}/mod-updates/check`, { method: "POST" })); drawModUpdates(sid, mod, r || undefined); });
+  $("#muall") && ($("#muall").onclick = () => run(null, `Updated ${items.length} mod(s)`));
+  $$("[data-mu]", box).forEach((b) => (b.onclick = () => { b.disabled = true; run([b.dataset.mu], "Updated"); }));
+  $("#murb") && ($("#murb").onclick = async () => {
+    if (!confirm("Put back the versions from before the last update?")) return;
+    const r = await act(() => api(`/servers/${sid}/mod-updates/rollback`, { method: "POST" }), "Old versions are back. Restart the server to use them.");
+    if (r) tabMods(sid, LIST.find((x) => x.id === sid));
+  });
+}
+
 async function tabMods(sid, s) {
   if (s.loader === "vanilla") { $("#tab").innerHTML = `<div class="card muted">Vanilla servers don't take mods. Create a Paper, Fabric or NeoForge server instead.</div>`; return; }
   const mod = can("moderator");
@@ -702,7 +868,9 @@ async function tabMods(sid, s) {
     <p class="sub" style="margin:0">Only ${esc(LOADER[s.loader] || s.loader)} builds for ${esc(s.mc_version || "this version")} that run on servers are shown.</p>
     <div class="list" id="mres"></div>` : ""}
     ${(s.auto_disabled || []).length ? `<div class="banner">SpawnPoint turned off ${s.auto_disabled.length} client-only mod(s) that crash servers: ${esc(s.auto_disabled.map((m) => m.name).join(", "))}. Players can still use them in their own game.</div>` : ""}
+    <div id="mupd"></div>
     <h4 style="margin:4px 0 0">Installed</h4><div class="list" id="mlist"></div>`;
+  drawModUpdates(sid, mod);
   const drawInstalled = async () => {
     const m = await api(`/servers/${sid}/mods`);
     const extra = (m.managed || []).length ? `<div class="sub">Added on top of the modpack, kept across restarts and pack updates:</div>` +
@@ -744,6 +912,21 @@ async function tabMods(sid, s) {
   search();
 }
 
+async function drawPlayerHistory(sid) {
+  const box = $("#phist"); if (!box) return;
+  const rows = await api(`/servers/${sid}/player-history`).catch(() => null);
+  if (!rows) { box.innerHTML = `<div class="sub">Couldn't load the history.</div>`; return; }
+  box.innerHTML = rows.map((p) => `<div class="item"><div class="grow"><div class="t">${esc(p.name)}${p.online ? ` <span class="badge on" style="margin-left:6px">online</span>` : ""}</div>
+      <div class="d">${dur(p.play_s)} played over ${p.sessions} visit${p.sessions === 1 ? "" : "s"} · first seen ${ago(p.first)}${p.online ? "" : ` · last seen ${ago(p.last)}`}</div>
+      ${p.home ? `<div class="d">Usually around <a href="#" data-go="${p.home.dim},${p.home.x},${p.home.z}" class="mono">${p.home.x}, ${p.home.z}</a>${p.home.dim !== "overworld" ? ` in ${DIMNAME[p.home.dim] || p.home.dim}` : ""}</div>` : ""}</div></div>`).join("")
+    || `<div class="sub">Nobody yet. SpawnPoint starts keeping track from the first player who joins.</div>`;
+  $$("[data-go]", box).forEach((a) => (a.onclick = (e) => {      // show that spot on the map
+    e.preventDefault(); const [d, x, z] = a.dataset.go.split(",");
+    MAPDIM[sid] = d; VIEWS[sid + "/" + d] = { x: +x, z: +z, ppb: 1 };
+    const s = LIST.find((y) => y.id === sid); if (s) drawMapHead(s); drawMap();
+    $("#map")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }));
+}
 async function tabPlayers(sid, s) {
   const st = s.stats || {}, mod = can("moderator");
   const lists = await api(`/servers/${sid}/lists`); LISTS[sid] = lists;
@@ -758,8 +941,10 @@ async function tabPlayers(sid, s) {
     ${sec(`Online now (${st.online ?? 0})`, st.players || [], [["kick", "Kick"], ["op", "Op"]])}
     ${sec("Whitelist", lists.whitelist, [["whitelist-remove", "Remove"]])}
     ${sec("Operators", lists.ops, [["deop", "Remove op"]])}
-    ${sec("Banned", lists["banned-players"], [["pardon", "Unban"]])}`;
+    ${sec("Banned", lists["banned-players"], [["pardon", "Unban"]])}
+    <h4 style="margin:6px 0 0">Everyone who has played</h4><div id="phist" class="list"><div class="sub">Loading…</div></div>`;
   drawShared(sid, s);
+  drawPlayerHistory(sid);
   if (!mod) return;
   $("#invite").onchange = async (e) => {
     const r = await act(() => api(`/servers/${sid}/invite-only`, { method: "POST", body: { on: e.target.checked } }));
@@ -768,6 +953,115 @@ async function tabPlayers(sid, s) {
   const run = async (name, action) => { await act(() => api(`/servers/${sid}/players`, { method: "POST", body: { name, action } }), "Done"); setTimeout(() => tabPlayers(sid, LIST.find((x) => x.id === sid) || s), 600); };
   $$("[data-add]", $("#tab")).forEach((b) => (b.onclick = () => $("#pn").value && run($("#pn").value.trim(), b.dataset.add)));
   $$("[data-pa]", $("#tab")).forEach((b) => (b.onclick = () => run(b.dataset.n, b.dataset.pa)));
+}
+
+// Minecraft version upgrades for plain servers: a trial copy on the new version first.
+const UPSTEP = { backup: "Backing up", copy: "Copying the server", mods: "Updating the copy's mods", trial: "Trial run", switch: "Switching over" };
+async function drawUpgradeCard(sid) {
+  const box = $("#upcard"); if (!box || box.hidden) return;
+  const s = LIST.find((x) => x.id === sid); if (!s) return;
+  const u = s.upgrade, prev = s.upgrade_prev, busy = u && !["done", "failed"].includes(u.step);
+  let body = "";
+  if (busy) {
+    const steps = Object.keys(UPSTEP), i = steps.indexOf(u.step);
+    body = `<p>${esc(u.msg || "")}</p><ol class="steps">${steps.map((k, j) => `<li class="${j < i ? "done" : j === i ? "now" : ""}">${UPSTEP[k]}</li>`).join("")}</ol>
+      <p class="sub">The server keeps running until the trial copy has started on ${esc(u.target)}; only then is it stopped and switched.</p>`;
+    setTimeout(async () => { if ($("#upcard") && TAB === "settings" && SEL === sid) { await refreshList(); drawUpgradeCard(sid); } }, 4000);
+  } else if (u?.step === "failed") {
+    const ex = u.result?.explain || {};
+    body = `<div class="crashcard"><b>${esc(u.msg)}</b>${ex.title ? `<p>${esc(ex.title)}${ex.mod ? ` (${esc(ex.mod)})` : ""}. ${esc(ex.detail || "")}</p>${ex.hint ? `<p class="sub">${esc(ex.hint)}</p>` : ""}` : ""}
+      ${u.result?.tail?.length ? `<details><summary class="sub">End of the trial's log</summary><pre class="console" style="max-height:220px;white-space:pre-wrap">${esc(u.result.tail.join("\n"))}</pre></details>` : ""}</div>
+      <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="small" id="upok">OK</button></div>`;
+  } else if (u?.step === "done") {
+    body = `<div class="banner info msg">Upgraded from ${esc(u.from)} to ${esc(u.target)} ${ago(u.at)}.${u.result?.changed?.length ? ` Mods: ${esc(u.result.changed.join("; "))}.` : ""} <button class="small" id="upok">OK</button></div>`;
+  }
+  box.innerHTML = `<h4 style="margin-top:0">Minecraft version</h4>
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><div>This server runs <b>${esc(LOADER[s.loader] || s.loader)} ${esc(s.mc_version)}</b></div>
+    ${busy ? "" : `<div class="row" style="gap:8px"><label for="upv" class="sr">New version</label><select id="upv" style="width:auto"><option>Loading…</option></select><button class="small" id="upchk">Check</button></div>`}</div>
+    ${body}
+    ${!busy ? `<p class="sub">Upgrading backs up first, then starts a copy of the server on the new version (with its mods updated). The real server is only switched over if the copy starts cleanly. Worlds can't be moved back to an older version, except by rolling back to that backup.</p>` : ""}
+    ${prev && !busy ? `<div class="banner info msg" style="margin-top:8px">Upgraded to ${esc(prev.to)} ${ago(prev.at)}. To go back to ${esc(prev.mc_version)}, roll back: the world and mods return to how they were just before (anything since is lost). <button class="small" id="uprb">Roll back</button></div>` : ""}`;
+  $("#upok") && ($("#upok").onclick = async () => { await act(() => api(`/servers/${sid}/upgrade/dismiss`, { method: "POST" })); await refreshList(); drawUpgradeCard(sid); });
+  $("#uprb") && ($("#uprb").onclick = async () => {
+    if (!confirm(`Roll back to ${prev.mc_version}? The world, mods and version go back to just before the upgrade.`)) return;
+    if (await act(() => api(`/servers/${sid}/upgrade/rollback`, { method: "POST" }), `Rolled back to ${prev.mc_version}`)) { await refreshList(); drawUpgradeCard(sid); }
+  });
+  if (busy || !$("#upv")) return;
+  const vs = (await api("/versions").catch(() => [])).filter((v) => cmpVer(v, s.mc_version) > 0);
+  $("#upv").innerHTML = vs.length ? vs.map((v) => `<option>${esc(v)}</option>`).join("") : `<option value="">Already on the newest</option>`;
+  $("#upchk").disabled = !vs.length;
+  $("#upchk").onclick = async () => {
+    const target = $("#upv").value; if (!target) return;
+    $("#upchk").disabled = true; $("#upchk").textContent = "Checking…";
+    const p = await act(() => api(`/servers/${sid}/upgrade/plan?target=${encodeURIComponent(target)}`));
+    $("#upchk").disabled = false; $("#upchk").textContent = "Check";
+    if (p) upgradeModal(sid, p);
+  };
+}
+function cmpVer(a, b) {
+  const pa = String(a).split(/[.-]/).map((n) => parseInt(n, 10) || 0), pb = String(b).split(/[.-]/).map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
+  return 0;
+}
+function upgradeModal(sid, p) {
+  const by = (st) => p.mods.filter((m) => m.status === st);
+  const upd = by("update"), none = by("none"), unk = by("unknown"), same = by("same");
+  const li = (ms, f) => ms.map((m) => `<li>${f(m)}</li>`).join("");
+  modal(`<h2>Upgrade to ${esc(p.target)}?</h2>
+    <p class="muted">From ${esc(p.current)}.${p.java !== p.java_now ? ` The server moves to ${esc(p.java.replace("java", "Java "))}.` : ""}</p>
+    ${p.mods.length ? `<div style="max-height:46vh;overflow:auto;display:grid;gap:10px">
+      ${upd.length ? `<div><b>${upd.length} will be updated</b><ul class="sub tight">${li(upd, (m) => `${esc(m.title)} ${esc(m.from)} → ${esc(m.to)}`)}</ul></div>` : ""}
+      ${none.length ? `<div><b style="color:var(--warn)">${none.length} have no build for ${esc(p.target)}</b><ul class="sub tight">${li(none, (m) => esc(m.title))}</ul>
+        <p class="sub">${p.missing_off ? "They'll be turned off, since mods made for another version usually stop the server starting. You can turn them back on in the Mods tab once they're updated." : "Plugins often still work on newer versions, so they're left on; the trial run shows whether they load."}</p></div>` : ""}
+      ${unk.length ? `<div><b>${unk.length} aren't from Modrinth</b><ul class="sub tight">${li(unk, (m) => `<span class="mono">${esc(m.file)}</span>`)}</ul><p class="sub">These are left as they are; the trial run shows whether they work.</p></div>` : ""}
+      ${same.length ? `<p class="sub">${same.length} already work on ${esc(p.target)}.</p>` : ""}</div>` : ""}
+    ${p.fits ? "" : `<p style="color:var(--bad)">There isn't enough free disk for the trial copy (${(p.size / 2 ** 30).toFixed(1)} GB plus room to spare).</p>`}
+    <p class="sub">Backs up first. The server keeps running during the trial and is only switched over if the copy starts.</p>
+    <div class="row" style="justify-content:flex-end"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" id="upgo" ${p.fits ? "" : "disabled"}>Upgrade</button></div>`);
+  $("#upgo").onclick = async () => {
+    $("#upgo").disabled = true;
+    const r = await act(() => api(`/servers/${sid}/upgrade`, { method: "POST", body: { target: p.target, turn_off_missing: true } }), `Upgrading to ${p.target}: backing up first`);
+    closeModal(); if (r) { await refreshList(); drawUpgradeCard(sid); }
+  };
+}
+
+// Discord chat bridge: webhook for game -> Discord, a shared bot for Discord -> game.
+async function drawChatCard(sid, c) {
+  const box = $("#chatcard"); if (!box) return;
+  c = c || await api(`/servers/${sid}/chat-bridge`).catch(() => null);
+  if (!c) { box.remove(); return; }
+  box.innerHTML = `<h4 style="margin-top:0">Discord chat</h4>
+    <label class="row" style="color:var(--ink)"><input type="checkbox" id="cbon" ${c.on ? "checked" : ""}> Connect this server's chat to a Discord channel</label>
+    <div style="${c.on ? "" : "opacity:.55"}">
+    <label for="cbwh">Channel webhook (game → Discord)</label>
+    <input id="cbwh" type="password" autocomplete="off" placeholder="${c.has_webhook ? "Saved. Paste a new one to replace it" : "https://discord.com/api/webhooks/…"}">
+    <p class="sub">In Discord: channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.</p>
+    <div class="row" style="flex-wrap:wrap;gap:6px 18px">${Object.entries(c.event_names).map(([k, l]) => `<label class="row" style="color:var(--ink)"><input type="checkbox" data-cbe="${k}" ${c.events[k] ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div>
+    <label class="row" style="color:var(--ink);margin-top:12px"><input type="checkbox" id="cbtg" ${c.to_game ? "checked" : ""}> Show Discord messages in game</label>
+    <label for="cbch">Channel ID (Discord → game)</label><input id="cbch" class="mono" value="${esc(c.channel || "")}" placeholder="1234567890123456789">
+    <p class="sub">Turn on Developer Mode in Discord's settings, then right-click the channel → Copy Channel ID. This direction needs a bot: ${c.has_bot ? "one is set up." : can("admin") ? "add one below." : "an admin has to add one."}</p>
+    ${can("admin") ? `<details ${c.has_bot ? "" : "open"} style="margin-top:6px"><summary class="sub">Discord bot (shared by all servers)</summary>
+      <p class="sub">At discord.com/developers: New Application → Bot → Reset Token and copy it, turn on <b>Message Content Intent</b>, then OAuth2 → URL Generator with the <i>bot</i> scope and the View Channels and Read Message History permissions, and open that link to add the bot to your Discord server.</p>
+      <div class="row" style="flex-wrap:nowrap"><input id="cbbot" type="password" autocomplete="off" style="flex:1" placeholder="${c.has_bot ? "Saved. Paste a new token to replace it" : "Bot token"}" aria-label="Bot token">
+      <button class="small" id="cbbs">Save bot</button>${c.has_bot ? `<button class="small danger" id="cbbr">Remove</button>` : ""}</div></details>` : ""}
+    </div>
+    ${c.status ? `<p class="sub" style="color:var(--warn)">${esc(c.status)}</p>` : ""}
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button class="small" id="cbt">Send a test</button><button class="primary small" id="cbs">Save</button></div>`;
+  const body = () => ({ on: $("#cbon").checked, channel: $("#cbch").value, to_game: $("#cbtg").checked,
+    events: Object.fromEntries($$("[data-cbe]", box).map((x) => [x.dataset.cbe, x.checked])),
+    ...($("#cbwh").value.trim() ? { webhook: $("#cbwh").value.trim() } : {}) });
+  $("#cbs").onclick = async () => { const r = await act(() => api(`/servers/${sid}/chat-bridge`, { method: "PUT", body: body() }), "Discord chat saved"); if (r) drawChatCard(sid, r); };
+  $("#cbon").onchange = () => $("#cbs").click();
+  $("#cbt").onclick = async () => {
+    const saved = await act(() => api(`/servers/${sid}/chat-bridge`, { method: "PUT", body: body() })); if (!saved) return;
+    const r = await act(() => api(`/servers/${sid}/chat-bridge/test`, { method: "POST" })); if (!r) return;
+    const say = (x, ok, none) => x === "ok" ? ok : x ? x : none;
+    toast(`${say(r.posted, "Posted a test message to Discord.", "No webhook set, so nothing was posted.")} ${say(r.read, "The bot can read the channel.", "")}`.trim(),
+      (r.posted && r.posted !== "ok") || (r.read && r.read !== "ok"));
+    drawChatCard(sid);
+  };
+  $("#cbbs") && ($("#cbbs").onclick = async () => { if (!$("#cbbot").value.trim()) return; if (await act(() => api(`/chat-bridge/bot`, { method: "PUT", body: { token: $("#cbbot").value.trim() } }), "Bot saved")) drawChatCard(sid); });
+  $("#cbbr") && ($("#cbbr").onclick = async () => { if (confirm("Remove the bot? Discord messages stop reaching every server.") && await act(() => api(`/chat-bridge/bot`, { method: "PUT", body: { token: "" } }), "Bot removed")) drawChatCard(sid); });
 }
 
 const COMMON_PROPS = ["motd", "difficulty", "gamemode", "max-players", "white-list", "pvp", "view-distance",
@@ -801,7 +1095,7 @@ async function tabSettings(sid, s) {
         ${bd.note ? `<p class="sub" style="color:var(--warn)">${esc(bd.note)}</p>` : ""}
         <p class="sub">${s.restart_pending ? "Restart the server to finish turning it on. " : ""}UDP port ${bd.port} has to reach this machine: forward it on your router (or add a UDP resource in Pangolin).</p>`
       : `<p class="sub">${canBedrock ? "Adds Geyser and Floodgate. Geyser exists for Paper and Purpur 1.20.5+, and for Fabric and NeoForge only on the newest Minecraft release, so most modpacks can't use it. Bedrock players get their own UDP port." : "Geyser doesn't run on this server type (it needs Paper, Purpur, Fabric or NeoForge)."}</p>`}</div>`;
-  $("#tab").innerHTML = packCard + pubCard + bedCard + `<div class="card"><h4 style="margin-top:0">Server</h4>
+  $("#tab").innerHTML = packCard + `<div class="card" id="upcard" ${!s.pack && s.mc_version && s.mc_version.toUpperCase() !== "LATEST" ? "" : "hidden"}></div>` + pubCard + bedCard + `<div class="card" id="chatcard"></div>` + `<div class="card"><h4 style="margin-top:0">Server</h4>
       <label for="sn">Display name</label><input id="sn" value="${esc(s.name)}">
       <label for="hp">Address</label><div class="row" style="flex-wrap:nowrap"><input id="hp" value="${esc(prefix)}" style="flex:1"><span class="sub mono">.${esc(INFO.base_domain)}</span></div>
       <label for="as">Sleep after this many empty minutes (0 = never)</label><input id="as" type="number" min="0" value="${s.auto_sleep_min || 0}">
@@ -828,6 +1122,8 @@ async function tabSettings(sid, s) {
       <details style="margin-top:12px"><summary class="sub">All properties</summary><div class="kv" style="margin-top:10px">
       ${props.filter(([k]) => !COMMON_PROPS.includes(k)).map(([k, v]) => `<div style="overflow-wrap:anywhere">${esc(k)}</div><div><input aria-label="${esc(k)}" data-k="${esc(k)}" value="${esc(v)}"></div>`).join("")}</div></details>
       <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="primary" id="sp">Save properties</button></div></div>`;
+  drawChatCard(sid);
+  drawUpgradeCard(sid);
   const savePub = async (extra = {}) => {
     const r = await act(() => api(`/servers/${sid}/public-map`, { method: "PUT",
       body: { enabled: $("#pme").checked, players: $("#pmp").checked, spawn: $("#pms").checked, ...extra } }));
@@ -881,6 +1177,7 @@ async function tabSettings(sid, s) {
 }
 
 async function tabFiles(sid, s, path = "") {
+  if (!path && FILES_AT) { path = FILES_AT; FILES_AT = null; }
   const r = await act(() => api(`/servers/${sid}/files?path=${encodeURIComponent(path)}`)); if (!r) return;
   const up = path.split("/").slice(0, -1).join("/");
   $("#tab").classList.toggle("fill", !r.entries);

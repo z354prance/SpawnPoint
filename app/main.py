@@ -9,12 +9,14 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 
+import httpx
+
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import activity, alerts, backups, bedrock, catalog, lagwatch, sharedlist, heads, packs, schedules, hostinfo, mapper, config, dockerctl, rcon, router, servers, state, topology, users
+from . import activity, alerts, backups, playerhist, bedrock, catalog, lagwatch, sharedlist, heads, packs, schedules, hostinfo, mapper, config, dockerctl, rcon, router, servers, state, topology, users
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("spawnpoint")
@@ -27,7 +29,9 @@ async def stats_loop():
     """Refresh RAM/CPU/players/TPS for running servers; handle auto-sleep."""
     idle_since: dict[str, float] = {}
     joined: dict[str, dict[str, float]] = {}     # sid -> player -> first seen online
+    last_sample: dict[str, float] = {}
     while True:
+        now_tick = time.time()
         for sid, s in list(state.servers().items()):
             try:
                 st = await asyncio.to_thread(dockerctl.status, sid)
@@ -45,6 +49,7 @@ async def stats_loop():
                             if nm not in names:
                                 del seen[nm]
                         entry.update(online=n, max=mx, players=names, joined=dict(seen))
+                        playerhist.note(sid, names, now)
                         if s["pregen"]["stage"] == "background":
                             entry["mspt"], entry["p95"] = s["pregen"].get("mspt"), s["pregen"].get("p95")
                         else:
@@ -72,6 +77,9 @@ async def stats_loop():
                     hostinfo.record(sid, entry["mspt"], entry["mem_gb"], entry["cpu"], entry.get("p95"),
                                     entry.get("online") if s.get("phase") == "online" else None)
                 _stats[sid] = entry
+                if entry.get("players") and now_tick - last_sample.get(sid, 0) >= 60:
+                    last_sample[sid] = now_tick                 # where people are, for history and the heat layer
+                    playerhist.sample(sid, await _positions(state.get(sid)))
             except Exception as e:
                 log.debug("stats %s: %s", sid, e)
         hostinfo.maybe_refresh_sizes()
@@ -95,6 +103,10 @@ async def lifespan(app: FastAPI):
     await bedrock.start_all()
     bsweep = asyncio.create_task(bedrock.sweep_loop())
     packcheck = asyncio.create_task(packs.loop())
+    from . import modupdates
+    from . import chatbridge, upgrades
+    await asyncio.to_thread(upgrades.recover)
+    extra = [asyncio.create_task(modupdates.loop()), asyncio.create_task(chatbridge.loop())]
     from . import proxy
     mc = await proxy.serve()
     yield
@@ -105,8 +117,11 @@ async def lifespan(app: FastAPI):
     bsweep.cancel()
     bedrock.stop_all()
     packcheck.cancel()
+    for t in extra:
+        t.cancel()
     schedules.stop_all()
     mapper.stop_all()
+    playerhist.flush_all()
     await servers.shutdown_all()
 
 
@@ -294,6 +309,15 @@ _ACTIONS = [
     ("DELETE", r"^/api/shared-players/(?P<d>[^/]+)$", "players.shared"),
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/shared-list$", "players.shared"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/pack/rollback$", "pack.rollback"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/mod-updates/update$", "mods.update"),
+    ("PUT", r"^/api/servers/(?P<sid>[^/]+)/chat-bridge$", "chat.change"),
+    ("PUT", r"^/api/chat-bridge/bot$", "chat.bot"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/markers$", "map.marker"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/upgrade$", "server.upgrade"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/upgrade/rollback$", "server.upgrade-rollback"),
+    ("PUT", r"^/api/servers/(?P<sid>[^/]+)/markers/(?P<d>[^/]+)$", "map.marker"),
+    ("DELETE", r"^/api/servers/(?P<sid>[^/]+)/markers/(?P<d>[^/]+)$", "map.marker"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/mod-updates/rollback$", "mods.rollback"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/backups/(?P<d>[^/]+)/restore$", "backup.restore"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/backups/(?P<d>[^/]+)/restore-files$", "backup.restore-files"),
     ("GET", r"^/api/servers/(?P<sid>[^/]+)/backups/(?P<d>[^/]+)$", "backup.download"),
@@ -540,6 +564,9 @@ async def delete_server(sid: str, files: bool = False):
     await servers.delete(sid, files)
     await asyncio.to_thread(mapper.cleanup, sid)
     hostinfo.forget(sid)
+    playerhist.forget(sid)
+    from . import chatbridge
+    chatbridge.forget(sid)
     return {"ok": True}
 
 
@@ -1017,6 +1044,141 @@ async def test_alerts(body: AlertTest):
 
 
 # ------------------------------------------------------------------ modpack updates
+@app.get("/api/servers/{sid}/upgrade/plan", dependencies=moderator)
+async def upgrade_plan(sid: str, target: str):
+    from . import upgrades
+    _get(sid)
+    try:
+        return await upgrades.plan(sid, target)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Couldn't reach Modrinth to check the mods: {e}")
+
+
+class UpgradeReq(BaseModel):
+    target: str
+    turn_off_missing: bool = True
+
+
+@app.post("/api/servers/{sid}/upgrade", dependencies=moderator)
+async def upgrade_start(sid: str, body: UpgradeReq, request: Request):
+    from . import upgrades
+    _get(sid)
+    request.state.detail = f"to {body.target}"
+    try:
+        await upgrades.start(sid, body.target, body.turn_off_missing)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return state.get(sid)["upgrade"]
+
+
+@app.post("/api/servers/{sid}/upgrade/rollback", dependencies=moderator)
+async def upgrade_rollback(sid: str):
+    from . import upgrades
+    _get(sid)
+    try:
+        return await upgrades.rollback(sid)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except backups.BackupError as e:
+        raise HTTPException(500, f"Restoring the backup failed: {e}")
+
+
+@app.post("/api/servers/{sid}/upgrade/dismiss", dependencies=moderator)
+def upgrade_dismiss(sid: str):
+    s = _get(sid)
+    if (s.get("upgrade") or {}).get("step") in ("done", "failed"):
+        state.update(sid, upgrade=None)
+    return {"ok": True}
+
+
+class ChatReq(BaseModel):
+    on: bool | None = None
+    webhook: str | None = None
+    channel: str | None = None
+    to_game: bool | None = None
+    events: dict | None = None
+
+
+@app.get("/api/servers/{sid}/chat-bridge", dependencies=moderator)
+def chat_get(sid: str):
+    from . import chatbridge
+    _get(sid)
+    return chatbridge.public(sid)
+
+
+@app.put("/api/servers/{sid}/chat-bridge", dependencies=moderator)
+def chat_put(sid: str, body: ChatReq):
+    from . import chatbridge
+    _get(sid)
+    try:
+        return chatbridge.set_server(sid, **body.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/servers/{sid}/chat-bridge/test", dependencies=moderator)
+async def chat_test(sid: str):
+    from . import chatbridge
+    _get(sid)
+    return await chatbridge.test(sid)
+
+
+class BotReq(BaseModel):
+    token: str
+
+
+@app.put("/api/chat-bridge/bot", dependencies=admin)
+def chat_bot(body: BotReq):
+    from . import chatbridge
+    chatbridge.set_bot(body.token)
+    return {"ok": True}
+
+
+@app.get("/api/servers/{sid}/mod-updates", dependencies=viewer)
+def mod_updates_get(sid: str):
+    from . import modupdates
+    s = _get(sid)
+    return {"supported": modupdates.supported(s), **(s.get("mod_updates") or {}), "rollback": s.get("mod_rollback")}
+
+
+@app.post("/api/servers/{sid}/mod-updates/check", dependencies=moderator)
+async def mod_updates_check(sid: str):
+    from . import modupdates
+    if not modupdates.supported(_get(sid)):
+        raise HTTPException(409, "Modpack servers get their mod versions from the pack")
+    try:
+        await modupdates.check(sid)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Couldn't reach Modrinth: {e}")
+    return mod_updates_get(sid)
+
+
+class ModUpdateReq(BaseModel):
+    files: list[str] | None = None
+
+
+@app.post("/api/servers/{sid}/mod-updates/update", dependencies=moderator)
+async def mod_updates_update(sid: str, body: ModUpdateReq):
+    from . import modupdates
+    if not modupdates.supported(_get(sid)):
+        raise HTTPException(409, "Modpack servers get their mod versions from the pack")
+    r = await modupdates.update(sid, body.files)
+    return {**r, **mod_updates_get(sid)}
+
+
+@app.post("/api/servers/{sid}/mod-updates/rollback", dependencies=moderator)
+def mod_updates_rollback(sid: str):
+    from . import modupdates
+    _get(sid)
+    try:
+        r = modupdates.rollback(sid)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    return {**r, **mod_updates_get(sid)}
+
+
 @app.post("/api/servers/{sid}/pack/check", dependencies=moderator)
 async def pack_check(sid: str):
     s = _get(sid)
@@ -1131,7 +1293,75 @@ async def _positions(s: dict) -> list:
 @app.get("/api/servers/{sid}/map", dependencies=viewer)
 def map_index(sid: str):
     s = _get(sid)
-    return {**mapper.public_index(sid), "status": s.get("map") or {}, "spawn": dict(zip(("x", "z"), mapper.spawn_point(sid)))}
+    return {**mapper.public_index(sid), "status": s.get("map") or {}, "spawn": dict(zip(("x", "z"), mapper.spawn_point(sid))),
+            "markers": s.get("markers") or []}
+
+
+@app.get("/api/servers/{sid}/player-history", dependencies=viewer)
+def player_history(sid: str):
+    _get(sid)
+    return playerhist.players(sid, _stats.get(sid, {}).get("players"))
+
+
+@app.get("/api/servers/{sid}/map/heat", dependencies=viewer)
+def map_heat(sid: str, dim: str = "overworld"):
+    _get(sid)
+    return playerhist.heat(sid, dim)
+
+
+MARKER_COLORS = ("#FF9D4A", "#5B8DEF", "#22C55E", "#E879F9", "#F5A524", "#F87171", "#E9ECF1")
+
+
+class MarkerReq(BaseModel):
+    name: str
+    dim: str = "overworld"
+    x: int
+    z: int
+    color: str = "#FF9D4A"
+    public: bool = True
+
+
+def _marker(body: MarkerReq, mid: str, me: dict) -> dict:
+    name = " ".join(body.name.split())[:40]
+    if not name:
+        raise HTTPException(400, "Give the marker a name")
+    if body.dim not in ("overworld", "nether", "end"):
+        raise HTTPException(400, "Unknown dimension")
+    if body.color not in MARKER_COLORS:
+        raise HTTPException(400, "Pick one of the marker colours")
+    return {"id": mid, "name": name, "dim": body.dim, "x": max(-30_000_000, min(30_000_000, body.x)),
+            "z": max(-30_000_000, min(30_000_000, body.z)), "color": body.color, "public": body.public,
+            "by": me.get("name", ""), "at": time.time()}
+
+
+@app.post("/api/servers/{sid}/markers", dependencies=moderator)
+def marker_add(sid: str, body: MarkerReq, request: Request):
+    s = _get(sid)
+    ms = list(s.get("markers") or [])
+    if len(ms) >= 300:
+        raise HTTPException(409, "That's 300 markers already; remove some first")
+    m = _marker(body, secrets.token_hex(4), request.state.user)
+    state.update(sid, markers=ms + [m])
+    return m
+
+
+@app.put("/api/servers/{sid}/markers/{mid}", dependencies=moderator)
+def marker_edit(sid: str, mid: str, body: MarkerReq, request: Request):
+    s = _get(sid)
+    ms = list(s.get("markers") or [])
+    i = next((i for i, m in enumerate(ms) if m["id"] == mid), None)
+    if i is None:
+        raise HTTPException(404, "No such marker")
+    ms[i] = _marker(body, mid, request.state.user)
+    state.update(sid, markers=ms)
+    return ms[i]
+
+
+@app.delete("/api/servers/{sid}/markers/{mid}", dependencies=moderator)
+def marker_delete(sid: str, mid: str):
+    s = _get(sid)
+    state.update(sid, markers=[m for m in s.get("markers") or [] if m["id"] != mid])
+    return {"ok": True}
 
 
 @app.get("/api/servers/{sid}/map/players", dependencies=viewer)
@@ -1217,7 +1447,8 @@ def public_map_info(token: str):
     idx = mapper.public_index(s["id"])
     return {"name": s["name"], "dims": idx.get("dims", {}), "players": pm.get("players", True),
             "spawn": dict(zip(("x", "z"), mapper.spawn_point(s["id"]))) if pm.get("spawn", True) else None,
-            "online": s.get("phase") == "online", "updated": (s.get("map") or {}).get("rendered")}
+            "online": s.get("phase") == "online", "updated": (s.get("map") or {}).get("rendered"),
+            "markers": [{k: m[k] for k in ("name", "dim", "x", "z", "color")} for m in s.get("markers") or [] if m.get("public", True)]}
 
 
 @app.get("/m/{token}/players")

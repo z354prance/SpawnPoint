@@ -8,7 +8,10 @@ A MintServers-style Minecraft host for your own machine, all in **one Docker con
 - **Wake on join:** a sleeping server shows "💤 asleep: join to wake it" in the multiplayer list, and the first player who tries to join starts it. Servers that are getting ready show their progress there too (for example "⏳ Generating spawn… 62%").
 - **Spawn pre-generated before opening**, then the rest of the world in the background on spare CPU cores. Generation pauses whenever tick time rises above 40 ms and resumes below 30 ms.
 - **Automatic performance tuning:** each server gets its own CPU cores (following the L3 cache on CPUs that have several), and its main game thread is pinned there. RAM grows on demand and idle memory goes back to the machine (ZGC). Chunky, spark, FerriteCore, ModernFix and Lithium are added when missing.
-- **World maps** drawn from the world files, with live player positions.
+- **World maps** drawn from the world files, with live player positions, named markers and a layer showing where players spend their time.
+- **Safe Minecraft version upgrades:** a copy of the server is tried on the new version first; the real one only switches if it starts.
+- **Crashes explained in plain words**, naming the mod they point at, and **mod and plugin updates** checked daily from Modrinth.
+- **Discord chat bridge** both ways, and **player history**: playtime, visits, first and last seen.
 - **Incremental backups** on a schedule, **scheduled restarts** with an in-game countdown, and **automatic restart after a crash**.
 - **Import existing servers:** upload a `.zip` or `.tar.gz` of a server folder. SpawnPoint detects the type and versions, keeps the world, mods and settings, and deploys it.
 - **Users and roles** with an activity log, plus console, players and whitelist, `server.properties` editor, file editor and auto-sleep.
@@ -135,7 +138,9 @@ Everyone signs in with their own username and password. Roles apply to every ser
 
 **Lag reports:** when a server's slowest ticks stay over 50 ms (`LAG_REPORT_MS`) for most of three minutes, SpawnPoint records a 60-second [spark](https://spark.lucko.me) profile (at most every 30 minutes) and keeps the link in the Stats tab and the activity log, and sends an alert. Open it to see which mod or part of the game used the time. Needs spark, which SpawnPoint adds to modded servers and Paper includes; turn it off per server in Stats.
 
-**Crashes:** if a server goes down without anyone stopping it (a crash, a freeze caught by Minecraft's watchdog, or running out of memory), SpawnPoint logs it with the reason and the last error line, and starts it again. After 3 crashes in 15 minutes it stops trying and shows an error, so a broken mod can't loop forever. Typing `stop` in the console isn't a crash. Turn it off per server in **Settings**.
+**Crashes:** if a server goes down without anyone stopping it (a crash, a freeze caught by Minecraft's watchdog, or running out of memory), SpawnPoint logs it with the reason and starts it again. After 3 crashes in 15 minutes it stops trying and shows an error, so a broken mod can't loop forever. Typing `stop` in the console isn't a crash. Turn it off per server in **Settings**.
+
+**Crash reports in plain words:** after a crash, or a start that fails, SpawnPoint reads the newest crash report and the end of the log and says what happened: a mod missing a mod it needs (and which version), two copies of the same mod, a client-only mod on the server, a mod that couldn't patch the game, a mod built for a newer Java, the server freezing (and what it was busy in), running out of memory, or a crash and the mod its stack trace points at. That appears above the Console with buttons to open the crash report and turn the mod off, and in the activity log and alerts.
 
 ## World maps
 
@@ -145,7 +150,36 @@ Every server gets a simple top-down map of its world, drawn by SpawnPoint itself
 - **In the dashboard:** drag to move, scroll to zoom (down to about 4 pixels per block, enough to pick out a base), double-click to go back to spawn, which is marked with a house. The arrow keys and plus and minus work too. Players are shown live with their faces (from mc-heads.net, fetched once by SpawnPoint and cached for a day; Bedrock players get a coloured letter) and the direction they're facing, wherever they are, even far outside the pre-generated area: every region that exists is drawn, and the map can be dragged out to any player. The **Generation** button lays the pre-generation chunk grid over the terrain: the spawn area, land generated while playing, the edge being generated now, and the pre-generation limit (a square centred on the world spawn). Until the first map is drawn, the card shows that chunk view on its own. The Overworld, Nether and End each get their own map. The expand button shows the map full screen (Esc closes it).
 - **Good to know:** a 5,000-block pre-generated world is about 400 regions and takes a few minutes on a couple of cores. The first render downloads Minecraft's client jar once from Mojang for its textures. Maps live in `servers/.maps/<server>` and are small (tens of MB). It isn't a 3D map and doesn't zoom down to single blocks in detail; that's deliberate, to keep it fast.
 - **Public map:** in a server's **Settings**, turn on **Share a view-only map** to get an unguessable link (`/m/…`) that shows the terrain, and optionally live players and spawn, to anyone, with no account and nothing else from the dashboard. **Make a new link** retires the old one. The link only works where the dashboard itself can be reached, so sharing it outside your network needs the dashboard on a public address (for example through a reverse proxy).
+- **Markers:** moderators press **Add marker** and click the map to name a spot (a base, a farm, a portal) in one of seven colours. Anyone can click a marker to see its coordinates; moderators can rename, move, recolour or remove it. Markers show on the public map too, unless that's unticked for one. Up to 300 per server.
+- **Activity:** the **Activity** button shades where players have spent their time, in 32-block squares, from their positions sampled once a minute.
 - Otherwise maps need the dashboard sign-in, like everything else. Turn them off with `MAP_ENABLED=false`.
+
+## Player history
+
+The **Players** tab lists everyone who has played: total playtime, number of visits, when they were first and last seen, and where they usually are (click it to see the spot on the map). It's counted from the player list every 10 seconds and positions once a minute, and kept in `/servers/.spawnpoint/players/<server>.json`.
+
+## Minecraft version upgrades
+
+For servers without a modpack (modpacks change version through pack updates). In **Settings → Minecraft version**, pick a newer release and press **Check**: it shows the Java change and, for every mod or plugin from Modrinth, whether there's a build for the new version. **Upgrade** then:
+
+1. backs up,
+2. copies the server to a trial folder while the real one keeps running (an instant copy on Btrfs, XFS or ZFS; otherwise it needs free space for a full copy),
+3. updates the copy's mods, and turns off mods that have no build for the new version (plugins are left on, since they often still work),
+4. starts the copy on the new version in its own container with no ports open, and waits until it has fully started.
+
+Only if the copy starts cleanly is the real server stopped, switched the same way and started again. If it doesn't start, the real server isn't touched, and the card says why in plain words with the end of the trial's log. **Roll back** puts the old version, mods and world back from the backup (anything since is lost), since Minecraft can't move a world to an older version itself.
+
+## Mod and plugin updates
+
+On servers without a modpack, the **Mods** tab checks once a day which mods and plugins have a newer build for the server's loader and Minecraft version, by asking Modrinth about each file's checksum, so it works however the file got there. **Update** one or all; the new file is checked against Modrinth's checksum before it replaces the old one, and the old files are kept in `.spawnpoint/old-mods/` so **Undo that update** can put them back. Restart the server to load the new versions. Files that didn't come from Modrinth can't be checked. An alert can say when updates are waiting.
+
+## Discord chat
+
+In a server's **Settings → Discord chat**:
+
+- **Game → Discord** needs only a channel webhook (channel settings → Integrations → Webhooks). Chat appears under the player's name and face; joins and leaves, deaths, advancements and the server going up or down can each be turned off. Nobody can ping `@everyone` from the game.
+- **Discord → game** needs a Discord bot, set up once by an admin and shared by all servers: create an application at discord.com/developers, add a bot, turn on **Message Content Intent**, and invite it with the *View Channels* and *Read Message History* permissions. Then paste the channel's ID (Developer Mode → right-click the channel → Copy Channel ID). New messages are shown in game as `[Discord] name: message` within a few seconds. Messages from bots and webhooks are skipped, so nothing echoes.
+- **Send a test** posts a hello and checks the bot can read the channel. Webhook URLs and the bot token are kept in `/servers/.spawnpoint/chat.json`, readable only by SpawnPoint, and never sent to the browser.
 
 ## How a new server comes up
 

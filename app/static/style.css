@@ -304,3 +304,14 @@ td select { height: 34px; width: auto; }
 .guide-body p, .guide-body li { line-height: 1.55; }
 .guide-body ul { padding-left: 20px; } .guide-body li { margin: 6px 0; }
 @media (max-width: 900px) { .guide-wrap { grid-template-columns: 1fr; } .toc { position: static; flex-direction: row; flex-wrap: wrap; } }
+
+.crashcard { border: 1px solid #6b3a2e; background: #2a1d1b; border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; display: grid; gap: 6px; }
+.crashcard p { margin: 0; }
+.swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; padding: 0; min-height: 0; cursor: pointer; }
+.swatch.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--bg); }
+.swatch:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.steps { margin: 6px 0; padding-left: 20px; color: var(--mute); }
+.steps li.done { color: var(--ink); }
+.steps li.done::marker { content: "✓  "; color: var(--ok, #22C55E); }
+.steps li.now { color: var(--ink); font-weight: 600; }
+ul.tight { margin: 4px 0; padding-left: 18px; }

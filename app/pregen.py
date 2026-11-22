@@ -313,12 +313,14 @@ async def run(sid: str, fresh: bool) -> None:
             if state.get(sid)["pregen"]["stage"] == "background":
                 # Chunky was only just added (it used to be lost on restart): start now.
                 await background(sid, start_new=True)
+        else:
+            await servers.start_failed(sid, "Server didn't start. Check the console.")
         return
     spawn_first = stage in ("pending", "spawn")
     servers.set_phase(sid, "pregen-spawn" if spawn_first else "starting",
                       "Generating the area around spawn before opening" if spawn_first else "Starting")
     if not await servers.boot_ready(sid, config.INSTALL_TIMEOUT_S, burst=True):
-        servers.set_phase(sid, "error", "Server didn't start. Check the console.")
+        await servers.start_failed(sid, "Server didn't start. Check the console.")
         return
     state.update(sid, pack_pending=False)
     asyncio.create_task(servers._pin(s))

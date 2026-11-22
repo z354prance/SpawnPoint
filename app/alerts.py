@@ -23,11 +23,12 @@ EVENTS = {
     "schedule_failed": "A scheduled task failed",
     "disk_low": "The disk is running out of space",
     "pack_update": "A modpack update is available",
+    "mod_updates": "Mod or plugin updates are available",
     "lag_report": "A server lagged and a report was recorded",
     "server_online": "A server came online",
     "server_offline": "A server stopped or went to sleep",
 }
-DEFAULT_ON = {"crash", "crash_gave_up", "backup_failed", "schedule_failed", "disk_low", "pack_update", "lag_report"}
+DEFAULT_ON = {"crash", "crash_gave_up", "backup_failed", "schedule_failed", "disk_low", "pack_update", "mod_updates", "lag_report"}
 COLORS = {"info": 0x5B8DEF, "ok": 0x22C55E, "warn": 0xFF9D4A, "bad": 0xE5484D}
 REPEAT_S = 15 * 60                     # the same alert for the same server at most this often
 _last: dict[tuple[str, str], float] = {}

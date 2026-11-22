@@ -269,3 +269,12 @@ def test_page_asks_for_current_scripts():
     import re
     v = re.findall(r'/static/app\.js\?v=([0-9a-f]+)', r.text)
     assert v and f'/static/style.css?v={v[0]}' in r.text
+
+
+def test_page_script_has_no_duplicate_names():
+    """Two top-level functions with one name: the later silently replaces the earlier."""
+    import re
+    from collections import Counter
+    src = open(os.path.join(os.path.dirname(__file__), "..", "app", "static", "app.js")).read()
+    names = Counter(a or b for a, b in re.findall(r"^(?:async )?function (\w+)|^(?:const|let) (\w+)", src, re.M))
+    assert [n for n, k in names.items() if k > 1] == []
