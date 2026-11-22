@@ -299,10 +299,11 @@ async def run(sid: str, fresh: bool) -> None:
     continue in the background."""
     s = state.get(sid)
     p = s["pregen"]
-    if p["stage"] == "done" and s.get("loader") == "vanilla" and not p.get("method"):
-        # Vanilla servers used to skip pre-generation. They can use /forceload now: generate
-        # in the background (the server opens straight away as before).
-        p.update(stage="background", percent=0.0, method="forceload")
+    if p["stage"] == "background" and p.get("method") == "forceload":
+        # Without Chunky only the spawn area is pre-generated: /forceload works on the game's
+        # main thread, so the wider world would cost lag for little gain. The rest generates
+        # as people explore, which vanilla handles easily.
+        p.update(stage="done", spawn_only=True, paused=False, held=False)
         state.save()
     stage = p["stage"]
     if stage in ("done", "skipped"):
@@ -334,6 +335,14 @@ async def run(sid: str, fresh: bool) -> None:
             await _shrink(sid)
             await servers.go_online(sid)
             return
+        if state.get(sid)["pregen"].get("method") == "forceload":
+            _pg(sid, stage="done", spawn_only=True, percent=100.0)   # see above: spawn area only
+            topology.allocator().return_burst(sid)
+            await _shrink(sid)
+            await servers.go_online(sid)
+            servers.set_phase(sid, "online", "")
+            await _map_now(s)
+            return
         _pg(sid, stage="background", percent=0.0)
         await _map_now(s)
     await servers.go_online(sid)
@@ -344,6 +353,9 @@ async def run(sid: str, fresh: bool) -> None:
 
 async def background(sid: str, start_new: bool = False) -> None:
     s = state.get(sid)
+    if s["pregen"].get("method") == "forceload":
+        _pg(sid, stage="done", spawn_only=True, paused=False, held=False)   # spawn area only, see run()
+        return
     alloc = topology.allocator()
     if not alloc.burst.get(sid):
         if alloc.lend_burst(sid, config.BURST_GROUPS, config.MAX_BURST_SERVERS):

@@ -148,3 +148,11 @@ def test_forceload_finds_26_1_worlds(monkeypatch, tmp_path):
     assert mapper.region_dir("v") == str(new)
     assert asyncio.run(pregen.forceload_gen(state.get("v"), 60, throttle=False)) is True
     assert all(pregen._missing("v", b) == 0 for b in pregen._blocks(0, 0, 60))
+
+
+def test_without_chunky_only_the_spawn_area(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    pregen._pg("v", stage="background", method="forceload", percent=3.0, paused=True, held=True)
+    asyncio.run(pregen.background("v"))
+    p = state.get("v")["pregen"]
+    assert p["stage"] == "done" and p["spawn_only"] and not p["held"]

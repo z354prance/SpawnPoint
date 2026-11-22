@@ -371,13 +371,14 @@ function genState(s) {
   let r = 0, label;
   if (p.stage === "spawn") { r = sR * Math.sqrt(pct); label = `Generating the spawn area: ${(pct * 100).toFixed(0)}% of ${sR.toLocaleString()} blocks`; }
   else if (p.stage === "background") { r = Math.max(sR, R * Math.sqrt(pct)); label = `${(pct * 100).toFixed(0)}% of ${R.toLocaleString()} blocks${s.phase !== "online" ? "" : p.paused ? (p.paused_for === "hand" ? ", paused by hand: press Resume pre-gen to carry on" : p.paused_for === "players" ? ", waiting until nobody is playing" : p.paused_for === "disk" ? ", paused: the disk is nearly full" : ", paused while the server is busy") : s.burst ? ", using spare cores" : ""}`; }
-  else if (p.stage === "done" && s.loader === "vanilla" && !p.method) { label = "Pre-generates in the background from the next start"; }
+  else if (p.stage === "done" && s.loader === "vanilla" && !p.method) { label = "The world generates as people explore"; }
+  else if (p.stage === "done" && p.spawn_only) { r = sR; label = `Spawn area generated (${sR.toLocaleString()} blocks). Further out generates as people explore`; }
   else if (p.stage === "done") { r = R; label = `Generated out to ${R.toLocaleString()} blocks`; }
   else if (p.stage === "skipped") { label = "This Minecraft version can't pre-generate (needs Chunky or Minecraft 1.14+)"; }
   else { label = "Starts once the server is set up"; }
   const up = s.phase === "online" || s.phase === "pregen-spawn";
   if (!up && (p.stage === "spawn" || p.stage === "background")) label += ", continues when the server starts";
-  return { R, sR, r, pct, label, active: up && (p.stage === "spawn" || p.stage === "background"), stage: p.stage, paused: p.paused, up,
+  return { R, sR, r, pct, label, spawnOnly: p.stage === "done" && !!p.spawn_only, active: up && (p.stage === "spawn" || p.stage === "background"), stage: p.stage, paused: p.paused, up,
     cx: s.spawn?.x || 0, cz: s.spawn?.z || 0 };
 }
 const MAPDIM = {}, VIEWS = {}, MAPIDX = {}, PLAYERS = {}, TILES = new Map();
@@ -436,7 +437,7 @@ function drawMapHead(s) {
   $("#legend").innerHTML = `${onOver ? `<span><i class="ring"></i>Spawn area</span>
     ${g.stage === "background" ? `<span><i style="background:#7A3442"></i>Generated while playing</span>` : ""}
     ${g.active ? `<span><i style="background:${g.paused ? "#8A5A3C" : "#FF5A2B"}"></i>${g.paused ? "Paused" : "Generating now"}</span>` : ""}${ready ? "" : `<span><i style="background:#2A2F38"></i>Not generated yet</span>`}
-    ${g.stage === "background" || g.stage === "done" ? `<span><i class="ring" style="border-color:#7D8593"></i>${g.R.toLocaleString()}-block limit</span>` : ""}` : ""}
+    ${g.stage === "background" || (g.stage === "done" && !g.spawnOnly) ? `<span><i class="ring" style="border-color:#7D8593"></i>${g.R.toLocaleString()}-block limit</span>` : ""}` : ""}
     ${dim === "overworld" ? `<span><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="vertical-align:-1px;margin-right:6px"><path d="M1.5 6 6 1.5 10.5 6M3 5v5.5h6V5M5 10.5V8h2v2.5" fill="none" stroke="#FF9D4A" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/></svg>World spawn</span>` : ""}
     ${s.phase === "online" && s.stats?.online ? `<span><i class="dot"></i>Players</span>` : ""}`;
 }
@@ -493,7 +494,7 @@ function drawChunks(x, w, h, T, g, base) {
     x.lineWidth = 1 / ppb; x.strokeStyle = base ? "#1C1F25" : "rgba(0,0,0,.18)"; x.stroke();
   }
   const outline = (r, col, width, dash) => { x.beginPath(); rect(sq(r)); x.lineWidth = width / ppb; x.setLineDash(dash.map((v) => v / ppb)); x.strokeStyle = col; x.stroke(); x.setLineDash([]); };
-  if (g.stage === "background" || g.stage === "done") outline(g.R, base ? "#9AA3B2" : "rgba(233,236,241,.75)", 1.5, [4, 5]);
+  if (g.stage === "background" || (g.stage === "done" && !g.spawnOnly)) outline(g.R, base ? "#9AA3B2" : "rgba(233,236,241,.75)", 1.5, [4, 5]);
   outline(g.sR, "#FF9D4A", 2, [6, 4]);
   x.restore();
 }
@@ -501,7 +502,8 @@ function drawChunks(x, w, h, T, g, base) {
 // What the map can be dragged across: everything drawn, the pre-gen square and the players.
 function mapBounds(s, dim) {
   const g = genState(s), tiles = MAPIDX[s.id]?.dims?.[dim] || [], ps = (PLAYERS[s.id] || []).filter((p) => p.dim === dim);
-  let b = dim === "overworld" && hasGen(s) ? [g.cx - g.R, g.cz - g.R, g.cx + g.R, g.cz + g.R]
+  const gR = g.spawnOnly ? g.sR : g.R;
+  let b = dim === "overworld" && hasGen(s) ? [g.cx - gR, g.cz - gR, g.cx + gR, g.cz + gR]
     : dim === "overworld" ? [g.cx - 512, g.cz - 512, g.cx + 512, g.cz + 512] : [-512, -512, 512, 512];
   for (const [x, z] of tiles) b = [Math.min(b[0], x * 512), Math.min(b[1], z * 512), Math.max(b[2], x * 512 + 512), Math.max(b[3], z * 512 + 512)];
   for (const p of ps) b = [Math.min(b[0], p.x - 64), Math.min(b[1], p.z - 64), Math.max(b[2], p.x + 64), Math.max(b[3], p.z + 64)];
