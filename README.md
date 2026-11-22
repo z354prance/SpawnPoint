@@ -338,6 +338,14 @@ echo "SpawnPoint template and icon installed"; fi
 ```
 Unraid saves your filled-in settings in that same file, so the command won't overwrite it once it exists. New versions show up as an update in the Docker tab, and updating keeps your settings.
 
+**Refreshing the icon** after it changes (Unraid keeps its own copy of each container icon):
+```bash
+IMG=ghcr.io/z354prance/spawnpoint:latest
+docker run --rm --entrypoint cat $IMG /opt/spawnpoint/app/static/brand/spawnpoint-icon-512.png > /boot/config/plugins/dockerMan/icons/spawnpoint.png
+rm -f /var/lib/docker/unraid/images/spawnpoint-icon.png /usr/local/emhttp/state/plugins/dynamix.docker.manager/images/spawnpoint-icon.png
+```
+Then reload the Docker tab (Ctrl+F5 if the browser still shows the old one).
+
 **b. Create the container** from **Docker → Add Container → Template → spawnpoint**:
 - **Privileged** is already on. SpawnPoint needs it to run its own private Docker engine.
 - **Server data** and **Engine storage** default to `/mnt/cache/appdata/spawnpoint/servers` and `/mnt/cache/appdata/spawnpoint/engine`, directly on the cache pool. Keep the `/mnt/cache/…` form, **not** `/mnt/user/…`: the `/mnt/user` path goes through Unraid's share layer (FUSE), which is slower for game worlds, and the private engine falls back to a very slow storage mode on it (SpawnPoint warns about it).
