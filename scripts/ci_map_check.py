@@ -38,8 +38,6 @@ for f in sorted(glob.glob(os.path.join(rd, "*.mca"))):
                 print("section", sec.get("Y"), "block_states keys", sorted(bs), "| palette sample", repr(bs["palette"][:3])[:300],
                       "| data", type(bs.get("data")).__name__, len(bs.get("data") if bs.get("data") is not None else []))
                 break
-        print("heightmap MOTION_BLOCKING", type((lvl.get("Heightmaps") or {}).get("MOTION_BLOCKING")).__name__,
-              len((lvl.get("Heightmaps") or {}).get("MOTION_BLOCKING") or []))
         why2 = {}
         got = flatmap.chunk_columns(nbt, "overworld", None, why2)
         if got:
