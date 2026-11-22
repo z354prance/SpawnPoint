@@ -102,7 +102,7 @@ def test_full_import_flow(tmp_path, monkeypatch):
     _setup(monkeypatch, tmp_path)
     make_zip(tmp_path / "up.zip", {
         "server.properties": "motd=Our world\nserver-port=25570\nenable-rcon=false\nwhite-list=true\n",
-        "world/level.dat": "x", "whitelist.json": "[]",
+        "world/level.dat": "x", "whitelist.json": "[]", **{f"world/region/r.{i}.0.mca": "x" for i in range(12)},
         "libraries/net/minecraftforge/forge/1.20.1-47.3.0/x": "",
         "libraries/net/minecraft/server/1.20.1-20230612.114412/x": "",
         **{f"mods/m{i}.jar": "j" for i in range(70)},
