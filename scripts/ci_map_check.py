@@ -50,6 +50,27 @@ for f in sorted(glob.glob(os.path.join(rd, "*.mca"))):
     why = {}
     img = flatmap.render_region(f, "overworld", flatmap.Palette({}), why)
     print("in-process render", os.path.basename(f), "->", "nothing" if img is None else f"{int((img[..., 3] > 0).sum())} px", why)
+# does the stored surface height match the blocks? (26.x changed formats before)
+bad = total = 0
+example = None
+for f in sorted(glob.glob(os.path.join(rd, "*.mca")))[:2]:
+    for lx, lz, nbt in flatmap.read_chunks(f):
+        if nbt.get("Status") != "minecraft:full":
+            continue
+        total += 1
+        hm = nbt["Heightmaps"]["MOTION_BLOCKING"]
+        names, h, _ = flatmap.chunk_columns(nbt, "overworld")
+        secs = flatmap._sections(nbt)
+        sn = np.full((16, 16), "", dtype=object); sh = np.zeros((16, 16), np.int32)
+        flatmap._scan_top(secs, -64, np.ones((16, 16), bool), sn, sh)
+        off = (h != sh).sum()
+        if off > 20:
+            bad += 1
+            if example is None:
+                example = (os.path.basename(f), lx, lz, type(hm).__name__, getattr(hm, "dtype", None), len(hm),
+                           h[0, :6].tolist(), sh[0, :6].tolist(), names[0, :3].tolist(), sn[0, :3].tolist(),
+                           sorted(nbt), sorted(nbt["Heightmaps"]))
+print(f"surface check: {bad} of {total} full chunks disagree with their blocks; example {example}")
 assert mapper.due(state.get("demo")), "a fresh world should be due for a render"
 t0 = time.time()
 ok = asyncio.run(mapper.render("demo", lambda sid: None))
