@@ -296,34 +296,48 @@ def automodpack_jar(s: dict) -> str | None:
         return None
 
 
+def _amp_config(base: str) -> tuple[str, dict | None]:
+    p = os.path.join(base, "automodpack", "automodpack-server.json")
+    try:
+        with open(p, encoding="utf-8") as f:
+            return p, json.load(f)
+    except (OSError, ValueError):
+        return p, None
+
+
+def automodpack_port(base: str) -> int:
+    """Where AutoModpack listens inside the container. Releases up to 4.x share the game's
+    port (they spot their own connections by the AMMH greeting); newer ones can be given
+    their own port ("connection-mode": "MAGIC"), which SpawnPoint uses when it's there."""
+    _, cfg = _amp_config(base)
+    return AUTOMODPACK_PORT if cfg and "connection-mode" in cfg else 25565
+
+
 def configure_automodpack(base: str, real_ip: bool, page_url: str, extra: dict[str, str] | None = None) -> None:
-    """AutoModpack's server settings: "magic" mode on its own port inside the container,
-    which SpawnPoint's router forwards connections starting with AMMH to. It reads the
-    player's real IP the same way the game does, since it checks downloads against it.
-    Client-only files go in host-modpack/main so AutoModpack players get them too."""
+    """AutoModpack's server settings. The router sends connections starting with AMMH to
+    it, with the player's real IP the same way the game gets it (AutoModpack checks
+    downloads against that address). Client-only files go in host-modpack/main so
+    AutoModpack players get them too. AutoModpack writes its settings file on its first
+    start; until then there's nothing to change."""
     d = os.path.join(base, "automodpack")
-    os.makedirs(d, exist_ok=True)
-    p = os.path.join(d, "automodpack-server.json")
-    want = {"connection-mode": "MAGIC", "bind-port": AUTOMODPACK_PORT, "advertised-endpoint-port": -1,
-            "accept-proxy-protocol": bool(real_ip),
-            "nag-message": "Get this server's mods to join:", "nag-clickable-message": "Download the player pack",
-            "nag-clickable-link": page_url or "https://github.com/Skidamek/AutoModpack"}
-    cur = {}
-    if os.path.exists(p):
-        try:
-            with open(p, encoding="utf-8") as f:
-                cur = json.load(f)
-        except (OSError, ValueError):
-            text = open(p, encoding="utf-8", errors="replace").read()  # has comments: patch the values in place
-            for k, v in want.items():
-                text, n = re.subn(rf'("{re.escape(k)}"\s*:\s*)("[^"]*"|-?\d+|true|false)', lambda m: m.group(1) + json.dumps(v), text)
+    p, cur = _amp_config(base)
+    link = page_url or "https://modrinth.com/project/automodpack"
+    if cur is not None:
+        if "connection-mode" in cur:                           # newer format, kebab-case
+            want = {"connection-mode": "MAGIC", "bind-port": AUTOMODPACK_PORT, "advertised-endpoint-port": -1,
+                    "accept-proxy-protocol": bool(real_ip), "nag-message": "Get this server's mods to join:",
+                    "nag-clickable-message": "Download the player pack", "nag-clickable-link": link}
+            stray = []
+        else:                                                  # 4.x: on the game's port
+            want = {"bindPort": -1, "portToSend": -1, "addressToSend": "", "nagMessage": "Get this server's mods to join:",
+                    "nagClickableMessage": "Download the player pack", "nagClickableLink": link}
+            stray = [k for k in cur if "-" in k]               # keys an earlier SpawnPoint wrote by mistake
+        if stray or any(cur.get(k) != v for k, v in want.items()):
+            for k in stray:
+                cur.pop(k)
+            cur.update(want)
             with open(p, "w", encoding="utf-8") as f:
-                f.write(text)
-            want = {}
-    if want:
-        cur.update(want)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(cur, f, indent=2)
+                json.dump(cur, f, indent=2)
     host = os.path.join(d, "host-modpack", "main", "mods")
     os.makedirs(host, exist_ok=True)
     keep = set()

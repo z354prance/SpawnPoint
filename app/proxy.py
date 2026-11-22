@@ -310,14 +310,15 @@ async def _automodpack(buf: bytes, host: str, reader, writer, client_ip: str, cl
         return
     try:
         ip, _ = await asyncio.to_thread(backend_for, s)
-        br, bw = await asyncio.wait_for(asyncio.open_connection(ip, playerpack.AUTOMODPACK_PORT), 5)
+        port = await asyncio.to_thread(playerpack.automodpack_port, dockerctl.server_dir(s["id"]))
+        br, bw = await asyncio.wait_for(asyncio.open_connection(ip, port), 5)
     except (OSError, asyncio.TimeoutError):
         return
     _nodelay(bw)
     if s.get("real_ip"):
         # AutoModpack checks downloads against the player's address, which the game sees
         # through the same header, so both sides agree on who this is.
-        bw.write(proxyproto.build_v2(client_ip, client_port, ip, playerpack.AUTOMODPACK_PORT))
+        bw.write(proxyproto.build_v2(client_ip, client_port, ip, port))
     bw.write(buf)
     await bw.drain()
     log.info("mods %s -> %s", client_ip, host)

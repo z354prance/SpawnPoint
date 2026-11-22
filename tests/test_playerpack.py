@@ -78,17 +78,24 @@ def test_prism_zip(tmp_path, monkeypatch):
 
 def test_automodpack_config(tmp_path):
     base = tmp_path / "srv"
+    cfgp = base / "automodpack" / "automodpack-server.json"
     extra = tmp_path / "oculus.jar.disabled"; extra.write_bytes(b"x")
+    playerpack.configure_automodpack(str(base), True, "https://sp/p/t", {})
+    assert not cfgp.exists()                                    # AutoModpack writes it on its first start
+    # 4.x: shares the game's port
+    cfgp.parent.mkdir(parents=True, exist_ok=True)
+    cfgp.write_text(json.dumps({"bindPort": 1234, "nagClickableLink": "x", "validateSecrets": True, "bind-port": 25580}))
     playerpack.configure_automodpack(str(base), True, "https://sp/p/t", {"mods/oculus.jar": str(extra)})
-    cfg = json.loads((base / "automodpack" / "automodpack-server.json").read_text())
-    assert cfg["connection-mode"] == "MAGIC" and cfg["bind-port"] == 25580 and cfg["accept-proxy-protocol"] is True
-    assert cfg["nag-clickable-link"] == "https://sp/p/t"
+    cfg = json.loads(cfgp.read_text())
+    assert cfg["bindPort"] == -1 and cfg["nagClickableLink"] == "https://sp/p/t" and cfg["validateSecrets"]
+    assert "bind-port" not in cfg and playerpack.automodpack_port(str(base)) == 25565
     assert os.listdir(base / "automodpack" / "host-modpack" / "main" / "mods") == ["oculus.jar"]
-    cfg["other"] = 5
-    (base / "automodpack" / "automodpack-server.json").write_text(json.dumps(cfg))
+    # newer releases: their own port
+    cfgp.write_text(json.dumps({"connection-mode": "OFF", "bind-port": -1, "other": 5}))
     playerpack.configure_automodpack(str(base), False, "", {})
-    cfg = json.loads((base / "automodpack" / "automodpack-server.json").read_text())
-    assert cfg["other"] == 5 and cfg["accept-proxy-protocol"] is False
+    cfg = json.loads(cfgp.read_text())
+    assert cfg["connection-mode"] == "MAGIC" and cfg["bind-port"] == 25580 and cfg["accept-proxy-protocol"] is False
+    assert cfg["other"] == 5 and playerpack.automodpack_port(str(base)) == 25580
     assert os.listdir(base / "automodpack" / "host-modpack" / "main" / "mods") == []
 
 
@@ -136,7 +143,7 @@ def test_router_sends_ammh_to_automodpack(tmp_path, monkeypatch):
             w.write(b"AMOK"); await w.drain(); w.close()
         srv = await asyncio.start_server(backend, "127.0.0.1", 0)
         port = srv.sockets[0].getsockname()[1]
-        monkeypatch.setattr(playerpack, "AUTOMODPACK_PORT", port)
+        monkeypatch.setattr(playerpack, "automodpack_port", lambda base: port)
         monkeypatch.setattr(proxy, "backend_for", lambda s: ("127.0.0.1", 25565))
         monkeypatch.setattr(proxy, "lookup", lambda h: {"id": "a", "phase": "online", "real_ip": True,
                                                        "player_pack": {"sync": True}} if h == "a.mc.example.com" else None)

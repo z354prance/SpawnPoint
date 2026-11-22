@@ -15,8 +15,8 @@ HOST = b"pack.mc.example.com"
 HELLO = b"AMMH" + struct.pack(">H", len(HOST)) + HOST
 
 
-async def ask(port: int, header: bytes = b"") -> bytes:
-    r, w = await asyncio.wait_for(asyncio.open_connection("127.0.0.1" if port != playerpack.AUTOMODPACK_PORT else ip, port), 10)
+async def ask(addr: str, port: int, header: bytes = b"") -> bytes:
+    r, w = await asyncio.wait_for(asyncio.open_connection(addr, port), 10)
     w.write(header + HELLO)
     await w.drain()
     try:
@@ -28,19 +28,22 @@ async def ask(port: int, header: bytes = b"") -> bytes:
 
 
 async def check() -> None:
-    hdr = proxyproto.build_v2("203.0.113.9", 4444, ip, playerpack.AUTOMODPACK_PORT) if real else b""
-    direct = await ask(playerpack.AUTOMODPACK_PORT, hdr)
+    port = playerpack.automodpack_port(base)
+    print("AutoModpack port:", port)
+    hdr = proxyproto.build_v2("203.0.113.9", 4444, ip, port) if real else b""
+    direct = await ask(ip, port, hdr)
     print("direct:", direct)
     assert direct == b"AMOK", f"AutoModpack didn't answer on its port: {direct!r}"
     proxy.lookup = lambda h: {"id": "x", "phase": "online", "real_ip": real, "player_pack": {"sync": True}} if h == HOST.decode() else None
     proxy.backend_for = lambda s: (ip, 25565)
+    proxy.dockerctl.server_dir = lambda sid: base
     front = await asyncio.start_server(proxy.handle, "127.0.0.1", 0)
-    via = await ask(front.sockets[0].getsockname()[1])
+    via = await ask("127.0.0.1", front.sockets[0].getsockname()[1])
     front.close()
     print("through the router:", via)
     assert via == b"AMOK", f"The router didn't reach AutoModpack: {via!r}"
     if real:
-        bare = await ask(playerpack.AUTOMODPACK_PORT)          # with the header required, a bare connection is refused
+        bare = await ask(ip, port)          # with the header required, a bare connection is refused
         print("without the header:", bare)
         assert bare != b"AMOK"
 

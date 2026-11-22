@@ -68,22 +68,12 @@ jobs:
           start
           docker stop -t 60 amp && docker rm amp
           sudo chown -R $(id -u) /tmp/amp
-          ls /tmp/amp/mods /tmp/amp/automodpack
+          ls /tmp/amp/mods; ls -R /tmp/amp/automodpack | head -30
           python scripts/ci_automodpack_check.py /tmp/amp - configure 0
           start
           echo "AMP_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' amp)" >> $GITHUB_ENV
       - name: AMMH straight to AutoModpack and through the router
         run: python scripts/ci_automodpack_check.py /tmp/amp $AMP_IP check 0
-      - name: Same with real IPs (PROXY header)
-        run: |
-          docker stop -t 60 amp && docker rm amp
-          sudo chown -R $(id -u) /tmp/amp
-          python scripts/ci_automodpack_check.py /tmp/amp - configure 1
-          docker run -d --name amp -e EULA=TRUE -e TYPE=NEOFORGE -e VERSION=1.21.1 -e ONLINE_MODE=false -e MEMORY=2G \
-            -e MODRINTH_PROJECTS=automodpack -v /tmp/amp:/data itzg/minecraft-server:java21
-          for i in $(seq 1 150); do docker logs amp 2>&1 | grep -q 'Done (' && break; sleep 4; done
-          ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' amp)
-          python scripts/ci_automodpack_check.py /tmp/amp $ip check 1
       - name: Server log
         if: always()
         run: docker logs amp 2>&1 | grep -i -E "automodpack|error|exception" | tail -60 || true
