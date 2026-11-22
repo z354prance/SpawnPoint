@@ -42,7 +42,10 @@ def pack(vals, bits, tight=False):
     return out
 
 
-def chunk_118(top_y, top_block="minecraft:grass_block", floor=None, status="minecraft:full"):
+def LISTS(n, items): return b"\x09" + _s(n) + struct.pack(">bi", 8, len(items)) + b"".join(_s(i) for i in items)
+
+
+def chunk_118(top_y, top_block="minecraft:grass_block", floor=None, status="minecraft:full", strings=False):
     """1.18+ chunk: stone up to top_y-1, top_block at top_y (per column via a 16x16 array)."""
     min_y = -64
     top = np.full((16, 16), top_y) if np.isscalar(top_y) else np.asarray(top_y)
@@ -55,9 +58,11 @@ def chunk_118(top_y, top_block="minecraft:grass_block", floor=None, status="mine
             layer = np.where(wy < top, 1, np.where(wy == top, 2, 0))
             idx[y * 256:(y + 1) * 256] = layer.reshape(-1)
         if not idx.any():
-            secs.append([B("Y", sy), C("block_states", LISTC("palette", [[S("Name", "minecraft:air")]]))])
+            secs.append([B("Y", sy), C("block_states", LISTS("palette", ["minecraft:air"]) if strings else LISTC("palette", [[S("Name", "minecraft:air")]]))])
             continue
-        secs.append([B("Y", sy), C("block_states", LISTC("palette", [[S("Name", p)] for p in pal]), L("data", pack(idx, 4)))])
+        palette = LISTS("palette", [p + ("[snowy=false]" if strings and "grass" in p else "") for p in pal]) if strings \
+            else LISTC("palette", [[S("Name", p)] for p in pal])
+        secs.append([B("Y", sy), C("block_states", palette, L("data", pack(idx, 4)))])
     hm = (top + 1 - min_y).reshape(-1)
     of = ((floor if floor is not None else top) + 1 - min_y).reshape(-1) if floor is not None else hm
     body = I("DataVersion", 3955) + S("Status", status) + LISTC("sections", secs) + \
@@ -511,3 +516,8 @@ def test_lz4_and_external_chunks_and_reasons(tmp_path):
     why = {}
     flatmap.render_region(path, "overworld", flatmap.Palette(), why)
     assert list(why) and list(why)[0].startswith("bad data")
+
+
+def test_26_x_string_palettes():
+    names, h, _ = flatmap.chunk_columns(flatmap.parse_nbt(chunk_118(70, strings=True)), "overworld")
+    assert names[3, 3] == "minecraft:grass_block" and h[3, 3] == 70

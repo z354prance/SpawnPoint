@@ -348,6 +348,16 @@ _EARLY = {"empty", "structure_starts", "structure_references", "biomes", "noise"
 _DONE = {"full", "postprocessed", "fullchunk"}
 
 
+def _state_name(p) -> str:
+    """A palette entry's block name. Up to 1.21 an entry is {Name, Properties}; since 26.x
+    it's a string like "minecraft:oak_log[axis=y]"."""
+    if isinstance(p, dict):
+        return p.get("Name", "minecraft:air")
+    if isinstance(p, str):
+        return p.split("[", 1)[0] or "minecraft:air"
+    return "minecraft:air"
+
+
 def _sections(level: dict):
     """{section_y: (palette_names, indices or None)} for 1.13-1.17 and 1.18+ layouts."""
     out = {}
@@ -362,7 +372,7 @@ def _sections(level: dict):
             pal, data = sec.get("Palette") or [], sec.get("BlockStates")
         if not pal:
             continue
-        names = [p.get("Name", "minecraft:air") if isinstance(p, dict) else "minecraft:air" for p in pal]
+        names = [_state_name(p) for p in pal]
         if data is None or len(names) == 1:
             out[int(y)] = (names, None)
         else:
