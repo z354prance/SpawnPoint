@@ -51,7 +51,7 @@ for f in sorted(glob.glob(os.path.join(rd, "*.mca"))):
     img = flatmap.render_region(f, "overworld", flatmap.Palette({}), why)
     print("in-process render", os.path.basename(f), "->", "nothing" if img is None else f"{int((img[..., 3] > 0).sum())} px", why)
 # the map's top block must match what the game itself reports at a few spots
-# (a snow layer sits on top of the block the map shows, so it counts as a match one block up)
+# (the map shows the ground under snow layers and small plants, so those match one block up)
 mismatch = 0
 if os.path.exists("/tmp/mapci/truth.txt"):
     for line in open("/tmp/mapci/truth.txt"):
@@ -73,7 +73,7 @@ if os.path.exists("/tmp/mapci/truth.txt"):
                 else:
                     hits = "section missing"
                 got_n, got_y = names[z & 15, x & 15], int(h[z & 15, x & 15])
-                ok = b == "unknown" or (got_n == "minecraft:" + b and got_y == y) or (b == "snow" and got_y == y - 1)
+                ok = b == "unknown" or (got_n == "minecraft:" + b and got_y == y) or (b in ("snow", "short_grass", "tall_grass", "fern") and got_y == y - 1)
                 mismatch += not ok
                 print(f"TRUTH {'ok' if ok else 'WRONG'} {x} {y} {z}: game says {b}; map says {names[z & 15, x & 15]} at y={h[z & 15, x & 15]}; "
                       f"decoded column from y down {col}; '{b}' found in section at (y,z,x) {hits}; palette {secs[sy][0][:12] if sy in secs else ''} bits {secs[sy][1][0] if sy in secs and secs[sy][1] else None} longs {len(secs[sy][1][1]) if sy in secs and secs[sy][1] else None}")
