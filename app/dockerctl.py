@@ -207,7 +207,9 @@ def build_env(s: dict, worker_threads: int) -> dict:
         env["MOTD"] = s["name"]
         if s.get("seed"):
             env["SEED"] = s["seed"]           # level-seed for the new world (numbers or any text, like the game)
-        env["ALLOW_FLIGHT"] = "TRUE"   # modded servers kick for "flying" on jetpacks, elytra mods and lag
+        env["ALLOW_FLIGHT"] = "TRUE"
+        if (s.get("pregen") or {}).get("stage") in ("pending", "spawn", "background"):
+            env["PAUSE_WHEN_EMPTY_SECONDS"] = "0"      # 1.21.2+ would stop ticking, and generating, when empty   # modded servers kick for "flying" on jetpacks, elytra mods and lag
     mm = s.get("managed_mods") or []
     if mm:
         # Pinned versions, so the image doesn't have to work out the pack's version itself.

@@ -35,12 +35,29 @@ def _pg(sid: str, **fields) -> dict:
     return s
 
 
-async def _chunky(s: dict, *cmds: str) -> None:
+async def _chunky(s: dict, *cmds: str) -> list[str]:
+    outs = []
     for c in cmds:
         out = await servers.arcmd(s, f"chunky {c}")
         if "Unknown" in out or "Incorrect argument" in out and c == cmds[0]:
             raise rcon.RconError(f"Chunky not installed: {out.strip()[:120]}")
+        outs.append(out)
         await asyncio.sleep(0.5)
+    return outs
+
+
+async def _chunky_fresh(s: dict, radius: int) -> None:
+    """Start SpawnPoint's own task. A world can already have a Chunky task saved (an
+    imported world from another host, say, often with a far bigger radius). Chunky then
+    waits for "chunky confirm" before starting, and "continue" would resume that old task,
+    so cancel it first and confirm whatever Chunky asks."""
+    out = (await _chunky(s, "cancel minecraft:overworld"))[0]
+    if "confirm" in out.lower():
+        await _chunky(s, "confirm")
+    outs = await _chunky(s, "world minecraft:overworld", "spawn", "shape square", f"radius {radius}", "start")
+    if "confirm" in outs[-1].lower():
+        await _chunky(s, "confirm")
+    _pg(s["id"], chunky_task=radius, percent=0.0)
 
 
 async def _map_now(s: dict) -> None:
@@ -185,46 +202,66 @@ async def forceload_supported(s: dict) -> bool:
     return "Unknown" not in out and "Incorrect" not in out
 
 
+IN_FLIGHT = 4                  # batches loaded at once, so the game's world-gen threads all have work
+
+
 async def forceload_gen(s: dict, radius: int, throttle: bool) -> bool:
-    """Generate the square of `radius` blocks around spawn with /forceload, a batch at a
-    time. Resumable: batches already finished on disk are skipped. Returns True when done."""
+    """Generate the square of `radius` blocks around spawn with /forceload, a few batches
+    at a time. Resumable: batches already finished on disk are skipped. Returns True when done."""
     sid = s["id"]
     sx, sz = mapper.spawn_point(sid)
     blocks = _blocks(sx >> 4, sz >> 4, radius)
     th = Throttle(sid)
-    for i, b in enumerate(blocks):
-        while throttle:                                    # wait out pauses between batches
+    pending = list(enumerate(blocks))
+    live: dict[int, tuple] = {}                          # index -> (batch, deadline)
+    finished = 0
+
+    def area(b):
+        return b[0] * 16, b[1] * 16, b[2] * 16 + 15, b[3] * 16 + 15
+
+    async def unload(b):
+        try:
+            await servers.arcmd(s, "forceload remove %d %d %d %d" % area(b))
+        except rcon.RconError:
+            pass
+
+    try:
+        n = 0
+        while pending or live:
             if dockerctl.status(sid) != "running":
                 return False
-            await th.step(s)
-            if not th.paused:
-                break
-            await asyncio.sleep(POLL_S)
-        if dockerctl.status(sid) != "running":
-            return False
-        if await asyncio.to_thread(_missing, sid, b):
-            x1, z1, x2, z2 = b[0] * 16, b[1] * 16, b[2] * 16 + 15, b[3] * 16 + 15
-            try:
-                await servers.arcmd(s, f"forceload add {x1} {z1} {x2} {z2}")
-                deadline, n = time.monotonic() + BLOCK_TIMEOUT_S, 0
-                while time.monotonic() < deadline:
-                    await asyncio.sleep(CHECK_S)
-                    n += 1
-                    if n % 2 == 0:
-                        await servers.arcmd(s, "save-all")     # finished chunks reach the region files
-                        await asyncio.sleep(1)
-                        if not await asyncio.to_thread(_missing, sid, b):
-                            break
-                    if dockerctl.status(sid) != "running":
-                        return False
-            except rcon.RconError:
-                return False
-            finally:
-                try:
-                    await servers.arcmd(s, f"forceload remove {x1} {z1} {x2} {z2}")
-                except rcon.RconError:
-                    pass
-        _pg(sid, percent=round((i + 1) / len(blocks) * 100, 2))
+            if throttle and n % 2 == 0:
+                await th.step(s)
+            paused = throttle and th.paused
+            # top up the batches being generated (none while paused: the loaded ones finish)
+            while not paused and pending and len(live) < IN_FLIGHT:
+                i, b = pending.pop(0)
+                if not await asyncio.to_thread(_missing, sid, b):
+                    finished += 1
+                    continue
+                await servers.arcmd(s, "forceload add %d %d %d %d" % area(b))
+                live[i] = (b, time.monotonic() + BLOCK_TIMEOUT_S)
+            _pg(sid, percent=round(finished / len(blocks) * 100, 2))
+            if not live:
+                await asyncio.sleep(POLL_S if paused else 0)
+                n += 1
+                continue
+            await asyncio.sleep(CHECK_S)
+            n += 1
+            if n % 2 == 0:
+                await servers.arcmd(s, "save-all")         # finished chunks reach the region files
+                await asyncio.sleep(1)
+                for i, (b, deadline) in list(live.items()):
+                    if not await asyncio.to_thread(_missing, sid, b) or time.monotonic() > deadline:
+                        await unload(b)
+                        del live[i]
+                        finished += 1
+    except rcon.RconError:
+        return False
+    finally:
+        for b, _ in live.values():
+            await unload(b)
+    _pg(sid, percent=100.0)
     return True
 
 
@@ -234,9 +271,13 @@ async def _generate(s: dict, radius: int, throttle: bool, fresh_task: bool) -> b
     method = s["pregen"].get("method")
     if method in (None, "chunky"):
         seq = dockerctl.hub(sid).seq
+        p = s["pregen"]
+        # Only "continue" a task SpawnPoint started with this radius. Servers made before
+        # this was recorded count as ours, unless they were imported.
+        ours = p.get("chunky_task") == radius or (p.get("chunky_task") is None and not s.get("imported"))
         try:
-            if fresh_task:
-                await _chunky(s, "world minecraft:overworld", "spawn", "shape square", f"radius {radius}", "start")
+            if fresh_task or not ours:
+                await _chunky_fresh(s, radius)
             else:
                 await _chunky(s, "continue")
             _pg(sid, method="chunky")

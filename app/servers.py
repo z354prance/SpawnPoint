@@ -277,11 +277,35 @@ def _ram_check(s: dict) -> str | None:
     return None
 
 
+PREGEN_ACTIVE = ("pending", "spawn", "background")
+
+
+def apply_empty_pause(s: dict) -> None:
+    """Since 1.21.2 the game stops ticking when nobody's online (pause-when-empty-seconds),
+    which also stops pre-generation. Turn it off while pre-gen runs and put the server's
+    own value back once it's done. (SpawnPoint's auto-sleep still stops idle servers.)"""
+    sid = s["id"]
+    props = dict(read_properties(sid))
+    cur = props.get("pause-when-empty-seconds")
+    active = (s.get("pregen") or {}).get("stage") in PREGEN_ACTIVE
+    if active and cur is not None and cur.strip() != "0":
+        state.update(sid, empty_pause_restore=cur.strip())
+        write_properties(sid, {"pause-when-empty-seconds": "0"})
+    elif not active and s.get("empty_pause_restore") is not None:
+        if cur is not None and cur.strip() == "0":
+            write_properties(sid, {"pause-when-empty-seconds": s["empty_pause_restore"]})
+        state.update(sid, empty_pause_restore=None)
+
+
 async def _boot(s: dict, burst: bool = False) -> None:
     """(Re)create and start the container on its home cores (+ burst cores if lent)."""
     from . import realip
     state.update(s["id"], restart_pending=False)
+    if s.get("first_boot") and (s.get("pregen") or {}).get("stage") in PREGEN_ACTIVE:
+        state.update(s["id"], empty_pause_restore="60")      # the game's default, once pre-gen is done
+        s = state.get(s["id"])
     if not s.get("first_boot"):
+        await asyncio.to_thread(apply_empty_pause, s)
         # Container is stopped here, so it's safe to (re)apply the real-IP setup.
         from . import packs
         s = await packs.pin_curseforge(s)

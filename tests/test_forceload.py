@@ -85,3 +85,53 @@ def test_pause_button_is_remembered(monkeypatch, tmp_path):
         assert asyncio.run(th.step(state.get("v"))) is None      # no lag, but it stays paused
     pregen._pg("v", held=False)
     assert asyncio.run(th.step(state.get("v"))) == "resume"  # released: carries on (nothing else is wrong)
+
+
+def test_several_batches_load_at_once(monkeypatch, tmp_path):
+    cmds = _setup(monkeypatch, tmp_path)
+    asyncio.run(pregen.forceload_gen(state.get("v"), 300, throttle=False))
+    most, now = 0, 0
+    for c in cmds:
+        now += c.startswith("forceload add") - c.startswith("forceload remove")
+        most = max(most, now)
+    assert most == pregen.IN_FLIGHT and now == 0
+
+
+def test_chunky_replaces_a_task_it_did_not_start(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    sent = []
+
+    async def arcmd(s, cmd):
+        sent.append(cmd)
+        if cmd == "chunky cancel minecraft:overworld":
+            return "[Chunky] Cancelled tasks can't be continued. Type '/chunky confirm' to cancel."
+        if cmd == "chunky start":
+            return "[Chunky] Found a paused task. Use '/chunky continue' to continue it or '/chunky confirm' to start over."
+        return "[Chunky] ok"
+    monkeypatch.setattr(servers, "arcmd", arcmd)
+    async def wait(s, after, throttle): return True
+    monkeypatch.setattr(pregen, "_wait_task", wait)
+    state.update("v", imported=True)
+    pregen._pg("v", percent=12.3, method="chunky")              # the old host's task, running when imported
+    assert asyncio.run(pregen._generate(state.get("v"), 400, throttle=True, fresh_task=False))
+    assert "chunky continue" not in sent
+    assert sent.count("chunky confirm") == 2 and "chunky radius 400" in sent
+    assert state.get("v")["pregen"]["chunky_task"] == 400
+    sent.clear()                                                # now it's ours: carry on with it
+    asyncio.run(pregen._generate(state.get("v"), 400, throttle=True, fresh_task=False))
+    assert sent == ["chunky continue"]
+
+
+def test_empty_pause_off_while_generating(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    p = tmp_path / "v" / "server.properties"
+    p.write_text("motd=v\npause-when-empty-seconds=60\n")
+    servers.apply_empty_pause(state.get("v"))
+    assert "pause-when-empty-seconds=0" in p.read_text() and state.get("v")["empty_pause_restore"] == "60"
+    pregen._pg("v", stage="done")
+    servers.apply_empty_pause(state.get("v"))
+    assert "pause-when-empty-seconds=60" in p.read_text() and state.get("v")["empty_pause_restore"] is None
+    p.write_text("motd=v\n")                                    # older versions don't have it: left alone
+    pregen._pg("v", stage="background")
+    servers.apply_empty_pause(state.get("v"))
+    assert "pause-when-empty" not in p.read_text()
