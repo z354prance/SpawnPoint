@@ -395,16 +395,48 @@ async def _pin(s: dict) -> None:
         log.debug("pinning failed: %s", e)
 
 
+def install_first(s: dict) -> bool:
+    """Modded servers and modpacks are installed without starting the game, then tuned,
+    then started once: a big pack's first start takes minutes, and starting it twice
+    (once to install, once after adding helpers) doubled that. Paper and vanilla start
+    in seconds and only write some of their config on a real start, so they keep the
+    install-by-starting path."""
+    return s.get("kind") not in ("paper", "purpur", "vanilla") and not s.get("imported")
+
+
+async def install_only(sid: str, timeout: float) -> bool:
+    """Run the image's setup (download loader, pack and mods) and wait for it to exit."""
+    import time as _t
+    state.update(sid, setup_only=True)
+    try:
+        await _boot(state.get(sid), burst=True)            # downloads and installers use the spare cores too
+        deadline = _t.time() + timeout
+        while _t.time() < deadline:
+            await asyncio.sleep(3)
+            if await asyncio.to_thread(dockerctl.status, sid) != "running":
+                info = await asyncio.to_thread(dockerctl.exit_info, sid) or {}
+                return info.get("code") == 0
+        return False
+    finally:
+        state.update(sid, setup_only=False)
+
+
 async def provision(sid: str) -> None:
     from . import pregen
     s = state.get(sid)
     try:
         set_phase(sid, "installing", "Downloading server / modpack (big packs can take a while)")
-        if not await boot_ready(sid, config.INSTALL_TIMEOUT_S):
-            await start_failed(sid, "Server didn't finish starting. Check the console.")
-            return
-        set_phase(sid, "preparing", "Adding performance helpers and tuning")
-        await asyncio.to_thread(dockerctl.get_container(sid).stop, timeout=120)
+        if install_first(s):
+            if not await install_only(sid, config.INSTALL_TIMEOUT_S):
+                await start_failed(sid, "The download or install didn't finish. Check the console.")
+                return
+            set_phase(sid, "preparing", "Adding performance helpers and tuning")
+        else:
+            if not await boot_ready(sid, config.INSTALL_TIMEOUT_S):
+                await start_failed(sid, "Server didn't finish starting. Check the console.")
+                return
+            set_phase(sid, "preparing", "Adding performance helpers and tuning")
+            await asyncio.to_thread(dockerctl.get_container(sid).stop, timeout=120)
         await prepare(s)
         s = state.update(sid, first_boot=False)
         await pregen.run(sid, fresh=True)
@@ -583,9 +615,34 @@ async def kill(sid: str) -> None:
     set_phase(sid, "stopped", "Force stopped")
 
 
+def _download_detail(s: dict) -> str:
+    mdir = mods_dir(s)
+    n = mb = 0
+    if os.path.isdir(mdir):
+        for f in os.listdir(mdir):
+            if f.endswith(".jar"):
+                n += 1
+                try:
+                    mb += os.path.getsize(os.path.join(mdir, f))
+                except OSError:
+                    pass
+    what = "modpack" if s.get("pack") else "server"
+    return f"Downloading {what}" + (f": {n} mods ({mb / 2**20:.0f} MB)" if n else "")
+
+
 def install_progress(s: dict) -> dict | None:
     """Step-by-step progress for a server that's being set up, for the cards."""
     phase = s.get("phase")
+    if install_first(s):
+        steps = ["Downloading", "Tuning", "First start", "Generating spawn"]
+        if phase == "installing":
+            return {"step": 1, "of": 4, "label": steps[0], "detail": _download_detail(s), "percent": None}
+        if phase == "preparing":
+            return {"step": 2, "of": 4, "label": steps[1], "detail": "Adding performance helpers", "percent": None}
+        if phase == "pregen-spawn" and (s.get("pregen") or {}).get("stage") in ("pending", None):
+            n = len([f for f in mod_files(s) if f.endswith(".jar")])
+            return {"step": 3, "of": 4, "label": steps[2],
+                    "detail": f"Loading {n} mods for the first time" if n else "Starting up for the first time", "percent": None}
     steps = ["Downloading", "First start", "Tuning", "Generating spawn"]
     if phase == "installing":
         h = dockerctl.hub(s["id"])

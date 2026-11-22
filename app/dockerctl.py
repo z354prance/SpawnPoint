@@ -217,6 +217,8 @@ def build_env(s: dict, worker_threads: int) -> dict:
         if s.get("loader") in ("forge", "neoforge", "fabric", "quilt"):
             env["MODRINTH_LOADER"] = s["loader"]
         env["MODRINTH_DOWNLOAD_DEPENDENCIES"] = "required"
+    if s.get("setup_only"):
+        env["SETUP_ONLY"] = "true"       # install the loader, pack and mods, then exit without starting the game
     env.update(s.get("extra_env", {}))
     return env
 

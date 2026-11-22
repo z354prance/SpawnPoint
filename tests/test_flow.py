@@ -251,3 +251,70 @@ def test_create_plain_server_with_seed(monkeypatch, tmp_path):
     assert env["SEED"] == "8675309"
     assert "SEED" not in dockerctl.build_env(dict(s, first_boot=False), 4)      # only for the brand-new world
     assert c.post("/api/servers", json={"kind": "paper", "mc_version": "1.21.4", "name": "p2", "seed": "x" * 80}).status_code == 422
+
+
+def test_modded_installs_without_a_throwaway_start(tmp_path, monkeypatch):
+    """Fabric/NeoForge/modpacks: install with SETUP_ONLY (no game start), tune, then one real start."""
+    monkeypatch.setattr(config, "STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(state, "_path", str(tmp_path / "state.json"))
+    monkeypatch.setattr(state, "_state", {"servers": {}})
+    monkeypatch.setattr(dockerctl, "server_dir", lambda sid: str(tmp_path / sid))
+    monkeypatch.setattr(pregen, "POLL_S", 0.05)
+    monkeypatch.setattr(pregen, "HOLD_S", 0)
+    monkeypatch.setattr(topology, "_allocator",
+                        topology.CoreAllocator([[2*i, 2*i+1, 2*i+24, 2*i+25] for i in range(12)], 2))
+    import threading
+    boots, box = [], {"c": FakeContainer()}
+
+    def replace_container(s, cpus, workers, start=True):
+        env = dockerctl.build_env(s, workers)
+        boots.append(("setup" if env.get("SETUP_ONLY") == "true" else "game", s["first_boot"], s["memory"]["max_gb"]))
+        box["c"] = FakeContainer()
+        os.makedirs(tmp_path / s["id"] / "mods", exist_ok=True)
+        if env.get("SETUP_ONLY") == "true":
+            for i in range(160):                            # the pack's mods land during setup
+                open(tmp_path / s["id"] / "mods" / f"m{i}.jar", "w").close()
+            box["c"].status = "exited"
+        else:
+            threading.Timer(0.05, lambda: dockerctl.hub(s["id"])._push('[Server thread/INFO]: Done (3.2s)! For help, type "help"')).start()
+    monkeypatch.setattr(dockerctl, "replace_container", replace_container)
+    monkeypatch.setattr(dockerctl, "exit_info", lambda sid: {"code": 0, "oom": False})
+    monkeypatch.setattr(dockerctl.LogHub, "ensure_running", lambda self: None)
+    monkeypatch.setattr(dockerctl, "get_container", lambda sid: box["c"])
+    monkeypatch.setattr(dockerctl, "status", lambda sid: box["c"].status)
+    monkeypatch.setattr(dockerctl, "set_cpuset", lambda sid, cpus: None)
+    monkeypatch.setattr(dockerctl, "pin_threads", lambda sid, cpus: {"pinned": True, "workers": 3})
+
+    def fake_rcmd(s, cmd):
+        if cmd == "chunky start":
+            threading.Timer(0.3, lambda: dockerctl.hub(s["id"])._push("[Chunky] Task finished for minecraft:overworld.")).start()
+        if cmd == "tick query":
+            return "Average time per tick: 20.0ms (Target: 50.0ms)"
+        return "There are 0 of a max of 20 players online:" if cmd == "list" else "ok"
+    monkeypatch.setattr(servers, "rcmd", fake_rcmd)
+
+    async def fake_download(slug, loader, ver, dest):
+        os.makedirs(dest, exist_ok=True)
+        open(os.path.join(dest, f"{slug}.jar"), "w").close()
+        return {"filename": f"{slug}.jar", "client_side": "optional"}
+    monkeypatch.setattr(catalog, "download_mod", fake_download)
+
+    async def run():
+        s = await servers.create({"kind": "fabric", "mc_version": "1.21.1", "name": "modded"})
+        seen = set()
+        for _ in range(300):
+            await asyncio.sleep(0.05)
+            p = servers.install_progress(state.get(s["id"]))
+            if p:
+                seen.add(p["label"])
+            if state.get(s["id"])["pregen"]["stage"] == "done":
+                break
+        return state.get(s["id"]), seen
+
+    s, seen = asyncio.run(run())
+    assert s["phase"] == "online", s.get("phase_msg")
+    assert [b[0] for b in boots][:2] == ["setup", "game"]           # one real start, not two
+    assert boots[0][1] is True and boots[1][1] is False
+    assert boots[1][2] == perf.memory_plan("fabric", s["mod_count"])[2]   # sized from the real mod count before starting
+    assert "chunky.jar" in s["helpers_added"]
+    assert {"Downloading", "Generating spawn"} <= seen

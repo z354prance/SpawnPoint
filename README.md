@@ -104,7 +104,7 @@ SpawnPoint sizes itself to the machine it runs on:
 - **Middle:** the selected server: Restart, Stop and Force stop, the main facts (including how long the last start took), a world map with live player positions and an optional overlay of how far the world has been generated, tick time and memory for the last hour, and who's playing.
 - **Right:** Console, Mods, Players, Settings, Files, Backups, Schedule and Stats for that server.
 - **User guide:** the book button next to Sign out opens a guide to everything in the dashboard, written for the people using it. Sections only show for roles that can use them. Its text lives in `app/static/guide.js`.
-- **Setup progress** is one bar split into the four steps (download, loader, mods, spawn), filling from crimson to gold. Bars that are actively working have a moving shine; it's turned off if your system asks for reduced motion.
+- **Setup progress** is one bar split into the four steps (download, tuning, first start, spawn), filling from crimson to gold. Bars that are actively working have a moving shine; it's turned off if your system asks for reduced motion.
 
 ## Shared invite list (optional)
 
@@ -183,10 +183,10 @@ In a server's **Settings → Discord chat**:
 
 ## How a new server comes up
 
-1. **Installing:** itzg/minecraft-server downloads the loader or modpack (big packs can take 5–15 min).
+1. **Installing:** itzg/minecraft-server downloads the loader or modpack (big packs can take 5–15 min). Modded servers and modpacks are only installed here, without starting the game, so a big pack's slow first start happens once instead of twice. Paper and vanilla start once here (it takes seconds), because some of their settings files only appear on a real start.
+2. **Tuning:** SpawnPoint adds helper mods if missing, sizes RAM from the real mod count and sets Paper's chunk worker threads.
+3. **Generating spawn:** the server starts with extra borrowed cores and Chunky generates a 750-block radius around spawn. The multiplayer list shows the progress; joining isn't possible yet.
    - If the pack includes **client-only mods** that crash a server (for example "invalid dist DEDICATED_SERVER" on Forge), SpawnPoint disables them and tries again. The Mods tab lists what it disabled; players can still use those mods in their own game.
-2. **Tuning:** SpawnPoint stops the server, adds helper mods if missing, sizes RAM from the real mod count and sets Paper's chunk worker threads.
-3. **Generating spawn:** the server boots with extra borrowed cores and Chunky generates a 750-block radius around spawn. The multiplayer list shows the progress; joining isn't possible yet.
 4. **Online:** players can join. Chunky keeps generating out to 5000 blocks on the borrowed cores and pauses automatically if players start to feel it.
 5. **Done:** the borrowed cores go back to the pool without a restart.
 
