@@ -81,6 +81,7 @@ window.GUIDE = [
       <li><b>Sleep</b> after a number of empty minutes, to free memory. Joining wakes it.</li>
       <li><b>Restart after a crash</b>: on by default.</li>
       <li><b>Minecraft version</b> (servers without a modpack): pick a newer version and press <b>Check</b> to see which mods have a build for it. <b>Upgrade</b> backs up, then starts a copy of the server on the new version while the real one keeps running. Only if the copy starts cleanly is the server switched over; if it doesn't, nothing changes and you're told why. <b>Roll back</b> returns to the old version and world.</li>
+      <li><b>Player pack</b> (modded servers): a download page for your players. The Prism Launcher instance updates itself every time they play; the zip works in any launcher, and stays in sync too if you turn on AutoModpack. Enter the address SpawnPoint is reachable at from the internet, then share the link. Mods are their authors' work: keep it to your own players.</li>
       <li><b>Discord chat:</b> connect the server's chat to a Discord channel. A channel webhook sends chat, joins, deaths and advancements to Discord. To show Discord messages in game too, an admin adds a Discord bot once (the card explains how) and you paste the channel's ID.</li>
       <li><b>Memory:</b> sized automatically from the number of mods. The server starts small, stays around its normal size, grows when it needs more and hands memory back when it's quiet.</li>
       <li><b>Public map</b> and <b>Bedrock players</b>: see their own sections.</li>

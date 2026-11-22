@@ -11,6 +11,7 @@ A MintServers-style Minecraft host for your own machine, all in **one Docker con
 - **World maps** drawn from the world files, with live player positions, named markers and a layer showing where players spend their time.
 - **Safe Minecraft version upgrades:** a copy of the server is tried on the new version first; the real one only switches if it starts.
 - **Crashes explained in plain words**, naming the mod they point at, and **mod and plugin updates** checked daily from Modrinth.
+- **Player packs** for modded servers: a download page with a Prism Launcher instance that updates itself, or a zip for any launcher kept in sync by AutoModpack. Served by SpawnPoint, no Modrinth or CurseForge account needed.
 - **Discord chat bridge** both ways, and **player history**: playtime, visits, first and last seen.
 - **Incremental backups** on a schedule, **scheduled restarts** with an in-game countdown, and **automatic restart after a crash**.
 - **Import existing servers:** upload a `.zip` or `.tar.gz` of a server folder. SpawnPoint detects the type and versions, keeps the world, mods and settings, and deploys it.
@@ -180,6 +181,19 @@ In a server's **Settings → Discord chat**:
 - **Game → Discord** needs only a channel webhook (channel settings → Integrations → Webhooks). Chat appears under the player's name and face; joins and leaves, deaths, advancements and the server going up or down can each be turned off. Nobody can ping `@everyone` from the game.
 - **Discord → game** needs a Discord bot, set up once by an admin and shared by all servers: create an application at discord.com/developers, add a bot, turn on **Message Content Intent**, and invite it with the *View Channels* and *Read Message History* permissions. Then paste the channel's ID (Developer Mode → right-click the channel → Copy Channel ID). New messages are shown in game as `[Discord] name: message` within a few seconds. Messages from bots and webhooks are skipped, so nothing echoes.
 - **Send a test** posts a hello and checks the bot can read the channel. Webhook URLs and the bot token are kept in `/servers/.spawnpoint/chat.json`, readable only by SpawnPoint, and never sent to the browser.
+
+## Player packs
+
+For modded servers, **Settings → Player pack** makes a page where your players download what they need to join. It's built from the server's own files, so it always matches:
+
+- **Prism Launcher instance** (recommended): drag it into [Prism](https://prismlauncher.org) and press Play. It has the right Minecraft and loader version and the server in the multiplayer list, and before every launch it runs [packwiz-installer](https://packwiz.infra.link/), which fetches only what changed from SpawnPoint. Add or update a mod on the server and players get it next time they play.
+- **Zip for any launcher**: the mods and client files to copy into a profile's game folder, with steps for making the profile. Turn on **Keep the zip's mods in sync with AutoModpack** and SpawnPoint adds [AutoModpack](https://modrinth.com/mod/automodpack) to the server and the zip, so players' mods update whenever they join. AutoModpack's downloads go through the same address and port as the game: SpawnPoint's router recognises them and passes them to the server (with the player's real IP when that's on).
+
+What's in it: the server's mods except ones only a server uses (Chunky, proxy and Discord mods, Fabric mods marked server-only), the client-only mods SpawnPoint turned off on the server, and `config`, `defaultconfigs`, `kubejs` (not its server scripts), resource packs and shader packs. Config files that look like they contain a password, token or webhook are left out, and the card lists everything left out and why. Players' own changes to config files are kept when the pack updates.
+
+The page is at `/p/<link>` on the address you enter in the card, which has to be reachable from the internet (a Pangolin HTTP resource for SpawnPoint, for example). Only that path works without signing in, and only files listed in the pack can be fetched from it. **New link** turns the old one off.
+
+Mods belong to their authors and many licences don't allow rehosting, so keep the link to your own players. For a public modpack server, point people to the official pack instead.
 
 ## How a new server comes up
 

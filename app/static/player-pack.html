@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Join the server</title>
+<link rel="icon" href="/static/brand/favicon.svg">
+<style>
+  :root { color-scheme: dark; --bg: #121418; --ink: #E9ECF1; --mute: #8B93A1; --card: #1A1D23; --line: #2A2F38; --acc: #FF9D4A; --acc-ink: #1B1206; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: 30px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 18px; margin: 0 0 6px; }
+  p { margin: 0 0 10px; }
+  .facts { color: var(--mute); margin-bottom: 22px; }
+  .addr { display: flex; gap: 8px; align-items: center; margin: 14px 0 30px; flex-wrap: wrap; }
+  .addr code { font: 600 17px ui-monospace, "SF Mono", Menlo, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; }
+  .way { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 20px 22px; margin-bottom: 16px; }
+  .way.best { border-color: #6B4A2A; }
+  ol { margin: 8px 0 14px; padding-left: 22px; }
+  li { margin-bottom: 4px; }
+  .tag { display: inline-block; font-size: 12px; color: var(--acc); margin-left: 8px; vertical-align: 2px; }
+  a { color: var(--acc); }
+  a.btn, button { display: inline-block; background: var(--acc); color: var(--acc-ink); font: 600 15px system-ui, sans-serif; text-decoration: none;
+    border: 0; border-radius: 10px; padding: 10px 16px; cursor: pointer; }
+  button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 8px 12px; font-weight: 500; }
+  a.btn:focus-visible, button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .note { color: var(--mute); font-size: 13px; }
+  .pack { border-left: 3px solid var(--acc); padding: 2px 0 2px 14px; margin: 0 0 22px; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="name">Join the server</h1>
+  <div class="facts" id="facts">Loading…</div>
+  <div class="addr"><code id="addr">–</code><button class="quiet" id="copy">Copy address</button></div>
+  <div id="pack" class="pack" hidden></div>
+
+  <section class="way best">
+    <h2>Prism Launcher <span class="tag">updates itself</span></h2>
+    <p>Everything set up in one go, and kept matching the server: when its mods change, yours update the next time you press Play.</p>
+    <ol>
+      <li>Install <a href="https://prismlauncher.org" rel="noopener">Prism Launcher</a> (free, for Windows, Mac and Linux) and sign in with your Microsoft account.</li>
+      <li>Download the instance below and drag the file into Prism's window (or Add Instance → Import).</li>
+      <li>Press Play. The first start downloads the mods, which takes a few minutes. The server is already in your multiplayer list.</li>
+    </ol>
+    <a class="btn" id="prism" href="#">Download for Prism Launcher</a>
+  </section>
+
+  <section class="way">
+    <h2>Any other launcher</h2>
+    <p id="anysync">The mods and settings as a zip, to copy into your game folder.</p>
+    <ol id="anysteps"></ol>
+    <a class="btn" id="zip" href="#">Download the mods</a> <span class="note" id="size"></span>
+  </section>
+  <p class="note">These files come from the server itself. They're for playing on it, so please don't share them elsewhere: the mods belong to their authors.</p>
+</main>
+<script>
+"use strict";
+const token = location.pathname.split("/")[2], base = `/p/${encodeURIComponent(token)}`;
+const $ = (id) => document.getElementById(id);
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const LD = { neoforge: "NeoForge", forge: "Forge", fabric: "Fabric", quilt: "Quilt" };
+fetch(`${base}/info`).then((r) => r.ok ? r.json() : Promise.reject()).then((i) => {
+  document.title = `Join ${i.name}`;
+  $("name").textContent = `Join ${i.name}`;
+  const ld = LD[i.loader] || i.loader;
+  $("facts").textContent = `Minecraft ${i.mc_version}${ld ? ` with ${ld} ${i.loader_version || ""}` : ""} · ${i.mods} mods · ${i.online ? "online now" : "offline right now"}`;
+  $("addr").textContent = i.address;
+  $("copy").onclick = () => navigator.clipboard.writeText(i.address).then(() => { $("copy").textContent = "Copied"; setTimeout(() => ($("copy").textContent = "Copy address"), 1500); });
+  if (i.pack?.title) {
+    $("pack").hidden = false;
+    $("pack").innerHTML = `This server runs the <b>${esc(i.pack.title)}</b> modpack${i.pack.version ? `, version ${esc(i.pack.version)}` : ""}. If you already use a launcher that has it (CurseForge, FTB, Modrinth or Prism), installing that exact version works too, and adds the pack's extras like minimaps and performance mods. The downloads below have everything the server needs.`;
+  }
+  $("prism").href = `${base}/prism.zip`;
+  $("zip").href = `${base}/pack.zip`;
+  $("size").textContent = `about ${Math.max(1, Math.round(i.size / 2 ** 20))} MB`;
+  $("anysteps").innerHTML = [
+    `In your launcher, make a profile for Minecraft ${esc(i.mc_version)}${ld ? ` with ${esc(ld)} ${esc(i.loader_version || "")}` : ""}.`,
+    "Unzip the download into that profile's game folder (the one with the mods folder), replacing files if asked.",
+    `Start the game and join <b>${esc(i.address)}</b>.`].map((x) => `<li>${x}</li>`).join("");
+  $("anysync").textContent = i.sync
+    ? "The mods and settings as a zip, with AutoModpack included: after this one install, it updates your mods by itself whenever you join and the server's have changed (the first time, it asks you to trust the server)."
+    : "The mods and settings as a zip, to copy into your game folder. When the server's mods change, download it again.";
+}).catch(() => { $("facts").textContent = "This link isn't active any more. Ask the server's owner for a new one."; });
+</script>
+</body>
+</html>

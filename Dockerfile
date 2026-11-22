@@ -12,6 +12,9 @@ ARG TARGETARCH=amd64
 RUN python3 -c "import urllib.request,bz2; d=urllib.request.urlopen('https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${TARGETARCH}.bz2').read(); open('/usr/local/bin/restic','wb').write(bz2.decompress(d))" \
  && chmod +x /usr/local/bin/restic && restic version
 WORKDIR /opt/spawnpoint
+# packwiz-installer-bootstrap: goes in player packs for Prism Launcher (app/playerpack.py)
+RUN mkdir -p assets && python3 -c "import urllib.request; open('assets/packwiz-installer-bootstrap.jar','wb').write(urllib.request.urlopen('https://github.com/packwiz/packwiz-installer-bootstrap/releases/latest/download/packwiz-installer-bootstrap.jar').read())" \
+ && python3 -c "import zipfile; zipfile.ZipFile('assets/packwiz-installer-bootstrap.jar').testzip()"
 COPY requirements.txt .
 RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
 COPY app ./app

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 import httpx
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -313,6 +313,7 @@ _ACTIONS = [
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/chat-bridge$", "chat.change"),
     ("PUT", r"^/api/chat-bridge/bot$", "chat.bot"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/markers$", "map.marker"),
+    ("PUT", r"^/api/servers/(?P<sid>[^/]+)/player-pack$", "server.player-pack"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/upgrade$", "server.upgrade"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/upgrade/rollback$", "server.upgrade-rollback"),
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/markers/(?P<d>[^/]+)$", "map.marker"),
@@ -1402,6 +1403,121 @@ async def set_bedrock(sid: str, body: BedrockBody):
         return await (bedrock.enable(sid) if body.enabled else bedrock.disable(sid))
     except ValueError as e:
         raise HTTPException(409, str(e))
+
+
+# ------------------------------------------------------------------ player packs
+class PlayerPackReq(BaseModel):
+    enabled: bool | None = None
+    new_link: bool = False
+    sync: bool | None = None
+    base_url: str | None = None
+
+
+def _pack_view(sid: str) -> dict:
+    from . import playerpack
+    s = _get(sid)
+    pp = playerpack.settings(s)
+    out = {"enabled": playerpack.enabled(s), "token": pp.get("token"), "sync": bool(pp.get("sync")),
+           "base_url": pp.get("base_url", ""), "page": playerpack.page_url(s),
+           "modded": s.get("loader") not in ("vanilla", "paper", "purpur", None, ""),
+           "automodpack": bool(playerpack.automodpack_jar(s))}
+    if out["enabled"]:
+        fl, left = playerpack.files(s)
+        out.update(count=len(fl), mods=sum(1 for k in fl if k.startswith("mods/")), left_out=left[:200],
+                   size=sum(os.path.getsize(v) for v in fl.values()))
+    return out
+
+
+@app.get("/api/servers/{sid}/player-pack", dependencies=moderator)
+async def player_pack_get(sid: str):
+    return await asyncio.to_thread(_pack_view, sid)
+
+
+@app.put("/api/servers/{sid}/player-pack", dependencies=moderator)
+async def player_pack_put(sid: str, body: PlayerPackReq):
+    from . import playerpack
+    _get(sid)
+    if body.base_url is not None:
+        u = body.base_url.strip().rstrip("/")
+        if u and not re.match(r"^https?://[^/\s]+$", u):
+            raise HTTPException(400, "The address players use should look like https://spawnpoint.example.com")
+        cur = playerpack.settings(state.get(sid))
+        cur["base_url"] = u
+        state.update(sid, player_pack=cur)
+    playerpack.set_settings(sid, on=body.enabled, new_link=body.new_link)
+    note = ""
+    if body.sync is not None and body.sync != bool(playerpack.settings(state.get(sid)).get("sync")):
+        try:
+            note = await playerpack.set_sync(sid, body.sync)
+        except ValueError as e:
+            raise HTTPException(409, f"AutoModpack isn't available for this server: {e}")
+    return {**(await asyncio.to_thread(_pack_view, sid)), "note": note}
+
+
+def _pack_server(token: str) -> dict:
+    from . import playerpack
+    s = playerpack.by_token(token)
+    if not s:
+        raise HTTPException(404)
+    return s
+
+
+@app.get("/p/{token}")
+def player_pack_page(token: str):
+    _pack_server(token)
+    return FileResponse(os.path.join(STATIC, "player-pack.html"), headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+
+@app.get("/p/{token}/info")
+async def player_pack_info(token: str):
+    from . import playerpack
+    s = _pack_server(token)
+    loader, lver = await asyncio.to_thread(playerpack.loader_info, s)
+    _, _, fl, _ = await asyncio.to_thread(playerpack.index, s)
+    return {"name": s["name"], "address": s.get("hostname"), "mc_version": s.get("mc_version"), "loader": loader,
+            "loader_version": lver, "mods": sum(1 for k in fl if k.startswith("mods/")),
+            "size": sum(os.path.getsize(v) for v in fl.values()), "sync": bool(playerpack.settings(s).get("sync")
+                                                                               and playerpack.automodpack_jar(s)),
+            "pack": {"title": (s.get("pack") or {}).get("title"), "version": (s.get("pack") or {}).get("version")} if s.get("pack") else None,
+            "online": s.get("phase") == "online"}
+
+
+@app.get("/p/{token}/pack/{path:path}")
+async def player_pack_file(token: str, path: str):
+    """packwiz-installer reads pack.toml and index.toml, then fetches each listed file."""
+    from . import playerpack
+    s = _pack_server(token)
+    pack, idx, fl, _ = await asyncio.to_thread(playerpack.index, s)
+    if path == "pack.toml":
+        return Response(pack, media_type="application/toml", headers={"Cache-Control": "no-store"})
+    if path == "index.toml":
+        return Response(idx, media_type="application/toml", headers={"Cache-Control": "no-store"})
+    src = fl.get(path)                                        # only files in the index, never anything else
+    if not src:
+        raise HTTPException(404)
+    return FileResponse(src, filename=os.path.basename(path))
+
+
+@app.get("/p/{token}/prism.zip")
+async def player_pack_prism(token: str):
+    from . import playerpack
+    s = _pack_server(token)
+    url = playerpack.pack_url(s)
+    if not url:
+        raise HTTPException(409, "The server's owner hasn't set the address players use yet")
+    data = await asyncio.to_thread(playerpack.prism_zip, s, url)
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "-", s["name"]).strip("-") or "server"
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}-prism.zip"'})
+
+
+@app.get("/p/{token}/pack.zip")
+async def player_pack_zip(token: str):
+    from . import playerpack
+    s = _pack_server(token)
+    path = await asyncio.to_thread(playerpack.build_zip, s)
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "-", s["name"]).strip("-") or "server"
+    return FileResponse(path, media_type="application/zip", filename=f"{name}-mods.zip")
 
 
 # ------------------------------------------------------------------ public maps (no sign-in)

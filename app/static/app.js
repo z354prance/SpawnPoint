@@ -1077,6 +1077,40 @@ async function drawChatCard(sid, c) {
   $("#cbbr") && ($("#cbbr").onclick = async () => { if (confirm("Remove the bot? Discord messages stop reaching every server.") && await act(() => api(`/chat-bridge/bot`, { method: "PUT", body: { token: "" } }), "Bot removed")) drawChatCard(sid); });
 }
 
+// Player pack: a page where people download what they need to join (Prism instance or a zip).
+async function drawPlayerPack(sid, p) {
+  const box = $("#ppcard"); if (!box || box.hidden) return;
+  p = p || await api(`/servers/${sid}/player-pack`).catch(() => null);
+  if (!p) { box.remove(); return; }
+  const mb = (n) => `${Math.max(1, Math.round(n / 2 ** 20))} MB`;
+  const guess = location.origin.startsWith("http://localhost") || /^http:\/\/\d/.test(location.origin) ? "" : location.origin;
+  box.innerHTML = `<h4 style="margin-top:0">Player pack</h4>
+    <label class="row" style="color:var(--ink)"><input type="checkbox" id="ppon" ${p.enabled ? "checked" : ""}> Give players a download page for this server's mods</label>
+    <p class="sub">The page offers a Prism Launcher instance that updates itself every time they play, and a zip for any other launcher. Anyone with the link can download, nothing else.</p>
+    <label for="ppbase">Address players open SpawnPoint at</label>
+    <input id="ppbase" class="mono" value="${esc(p.base_url || guess)}" placeholder="https://spawnpoint.example.com">
+    <p class="sub">The page and Prism's updates are fetched from here, so it has to be reachable from the internet (a Pangolin HTTP resource, for example). Only the /p/ link is public; the rest still needs a sign-in.</p>
+    ${p.enabled ? `
+      <div class="row" style="flex-wrap:nowrap;margin-top:6px"><input class="mono" readonly style="flex:1" value="${esc(p.page || "Save the address above to get the link")}" aria-label="Player pack link">
+      ${p.page ? `<button class="small" id="ppcopy">Copy</button>` : ""}<button class="small" id="ppnew">New link</button></div>
+      <p class="sub">${p.mods} mods and ${p.count - p.mods} other files, ${mb(p.size)}.${p.left_out.length ? ` Left out: ${p.left_out.length}.` : ""}</p>
+      ${p.left_out.length ? `<details><summary class="sub">What's left out, and why</summary><ul class="sub" style="margin:6px 0 0 18px">${p.left_out.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
+      <label class="row" style="color:var(--ink);margin-top:12px"><input type="checkbox" id="ppsync" ${p.sync ? "checked" : ""}> Keep the zip's mods in sync with AutoModpack</label>
+      <p class="sub">Adds the AutoModpack mod to the server and the zip. When this server's mods change, players' copies update the next time they join. It goes through the same address and port as the game.</p>` : ""}
+    <p class="sub" style="color:var(--warn)">Mods belong to their authors and many licences don't allow sharing them elsewhere. Keep the link to your own players. For a public modpack server, point people to the official pack instead.</p>
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px">${p.page ? `<a class="btn small" href="${esc(p.page)}" target="_blank" rel="noopener">Open the page</a>` : ""}<button class="primary small" id="ppsave">Save</button></div>`;
+  const save = async (extra = {}, msg = "Player pack saved") => {
+    const r = await act(() => api(`/servers/${sid}/player-pack`, { method: "PUT",
+      body: { enabled: $("#ppon").checked, base_url: $("#ppbase").value, ...extra } }), msg);
+    if (r) { if (r.note) toast(r.note); drawPlayerPack(sid, r); }
+  };
+  $("#ppsave").onclick = () => save($("#ppsync") ? { sync: $("#ppsync").checked } : {});
+  $("#ppon").onchange = () => save();
+  $("#ppsync") && ($("#ppsync").onchange = () => save({ sync: $("#ppsync").checked }));
+  $("#ppnew") && ($("#ppnew").onclick = () => confirm("Make a new link? The old one stops working, and Prism instances made from it stop updating.") && save({ new_link: true }, "New link made"));
+  $("#ppcopy") && ($("#ppcopy").onclick = () => navigator.clipboard.writeText(p.page).then(() => toast("Link copied")));
+}
+
 const COMMON_PROPS = ["motd", "difficulty", "gamemode", "max-players", "white-list", "pvp", "view-distance",
   "simulation-distance", "spawn-protection", "allow-flight", "online-mode", "level-seed", "hardcore"];
 async function tabSettings(sid, s) {
@@ -1108,7 +1142,7 @@ async function tabSettings(sid, s) {
         ${bd.note ? `<p class="sub" style="color:var(--warn)">${esc(bd.note)}</p>` : ""}
         <p class="sub">${s.restart_pending ? "Restart the server to finish turning it on. " : ""}UDP port ${bd.port} has to reach this machine: forward it on your router (or add a UDP resource in Pangolin).</p>`
       : `<p class="sub">${canBedrock ? "Adds Geyser and Floodgate. Geyser exists for Paper and Purpur 1.20.5+, and for Fabric and NeoForge only on the newest Minecraft release, so most modpacks can't use it. Bedrock players get their own UDP port." : "Geyser doesn't run on this server type (it needs Paper, Purpur, Fabric or NeoForge)."}</p>`}</div>`;
-  $("#tab").innerHTML = packCard + `<div class="card" id="upcard" ${!s.pack && s.mc_version && s.mc_version.toUpperCase() !== "LATEST" ? "" : "hidden"}></div>` + pubCard + bedCard + `<div class="card" id="chatcard"></div>` + `<div class="card"><h4 style="margin-top:0">Server</h4>
+  $("#tab").innerHTML = packCard + `<div class="card" id="upcard" ${!s.pack && s.mc_version && s.mc_version.toUpperCase() !== "LATEST" ? "" : "hidden"}></div>` + pubCard + bedCard + `<div class="card" id="ppcard" ${s.loader && !["vanilla", "paper", "purpur"].includes(s.loader) ? "" : "hidden"}></div>` + `<div class="card" id="chatcard"></div>` + `<div class="card"><h4 style="margin-top:0">Server</h4>
       <label for="sn">Display name</label><input id="sn" value="${esc(s.name)}">
       <label for="hp">Address</label><div class="row" style="flex-wrap:nowrap"><input id="hp" value="${esc(prefix)}" style="flex:1"><span class="sub mono">.${esc(INFO.base_domain)}</span></div>
       <label for="as">Sleep after this many empty minutes (0 = never)</label><input id="as" type="number" min="0" value="${s.auto_sleep_min || 0}">
@@ -1136,6 +1170,7 @@ async function tabSettings(sid, s) {
       ${props.filter(([k]) => !COMMON_PROPS.includes(k)).map(([k, v]) => `<div style="overflow-wrap:anywhere">${esc(k)}</div><div><input aria-label="${esc(k)}" data-k="${esc(k)}" value="${esc(v)}"></div>`).join("")}</div></details>
       <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="primary" id="sp">Save properties</button></div></div>`;
   drawChatCard(sid);
+  drawPlayerPack(sid);
   drawUpgradeCard(sid);
   const savePub = async (extra = {}) => {
     const r = await act(() => api(`/servers/${sid}/public-map`, { method: "PUT",
