@@ -210,7 +210,7 @@ In **New server → Import existing**, upload a `.zip` or `.tar.gz` of the whole
 
 - **Detected automatically:** Forge, NeoForge, Fabric, Quilt, Paper, Purpur or vanilla, plus the Minecraft version and the exact loader version, which gets reinstalled as-is. If detection is wrong, open "Type and version" and set them.
 - **Kept:** the world, mods, configs, whitelist, ops, bans and `server.properties`. SpawnPoint only sets the port (25565) and its console access (RCON).
-- **Then:** the server gets the same treatment as any other: Java, RAM and cores, helper mods, real player IPs, and the automatic fixes. With an existing world it opens straight away, and background pre-generation only fills in chunks that don't exist yet.
+- **Then:** the server gets the same treatment as any other: Java, RAM and cores, helper mods, real player IPs, and the automatic fixes. A world that's been played in opens straight away, and background pre-generation only fills in chunks that don't exist yet. A world that was only started once (a fresh server pack) gets its spawn area generated first, like a new server.
 - **From another panel or a hosting company:** download or zip the server's folder and upload it.
 - Big uploads go faster on your home network (`http://<this-machine>:8090`) than through a proxy or tunnel.
 
