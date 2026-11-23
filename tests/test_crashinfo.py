@@ -174,3 +174,18 @@ def test_data_pack_needs_a_missing_mod(tmp_path, monkeypatch):
     assert ex["title"] == "A data pack needs a mod that isn't installed"
     assert "mr_lithosphere" in ex["detail"] and "lithostitched" in ex["detail"] and "Voxy" not in ex["detail"]
     assert ex["detail"].count("lithostitched") == 1 and "Add lithostitched" in ex["hint"]
+
+
+def test_world_saved_with_a_removed_mod(tmp_path, monkeypatch):
+    mods = _server(tmp_path, monkeypatch)
+    log = ["[03:25:17] [main/WARN]: Missing data pack lithostitched",
+           "[03:25:17] [main/WARN]: Missing data pack mr_lithosphere",
+           '[03:25:18] [Worker-Main-2/ERROR]: Failed to decode value DataResult.Success[ResourceKey[minecraft:dimension / '
+           'minecraft:overworld]] from ("minecraft:overworld", {generator:{biome_source:{delegate:{preset:"minecraft:overworld",'
+           'type:"minecraft:multi_noise"},type:"lithostitched:injector"},settings:"minecraft:amplified",type:"minecraft:noise"},'
+           'type:"minecraft:overworld"})  Optional.empty',
+           "[03:25:18] [main/WARN]: Failed to load datapacks, can't proceed with server load.",
+           "Caused by: java.lang.IllegalStateException: Overworld settings missing"]
+    ex = crashinfo.explain("s", log, mods_dir=mods)
+    assert ex["title"] == "The world was saved with a mod that's been removed"
+    assert "lithostitched" in ex["detail"] and "Add lithostitched back" in ex["hint"]

@@ -190,6 +190,19 @@ def explain(sid: str, log_lines: list[str], since: float | None = None, mods_dir
             return done("A data pack needs a mod that isn't installed",
                         f"{by} uses parts of {names}, which isn't installed, so the game can't load the world's data packs.",
                         "", f"Add {names} in the Mods tab (search for it by name), or remove the data pack that needs it.")
+        # the world's own settings (level.dat) name a type from a mod that's gone:
+        # Failed to decode value ... {generator:{biome_source:{... type:"lithostitched:injector"} ...
+        dec = re.search(r"Failed to decode value .*?dimension / ([a-z0-9_:/.-]+)\].*", log)
+        if dec or "Overworld settings missing" in log:
+            used = [n for n in dict.fromkeys(re.findall(r'type:"([a-z0-9_.-]+):', dec.group(0) if dec else ""))
+                    if n != "minecraft"]
+            gone = list(dict.fromkeys(re.findall(r"Missing data pack (\S+)", log)))
+            if used:
+                names = ", ".join(used[:3])
+                return done("The world was saved with a mod that's been removed",
+                            f"The world's terrain settings use {names}, which isn't installed any more"
+                            + (f" (missing: {', '.join(gone[:3])})" if gone else "") + ", so the game can't load the world.",
+                            "", f"Add {names} back in the Mods tab, or restore a backup from before it was added.")
         first = re.search(r"Failed to parse (\S+) from pack (\S+)", log)
         return done("A data pack couldn't be loaded",
                     (f"{first.group(1)} in the {first.group(2)} data pack has an error." if first else
