@@ -356,33 +356,52 @@ def test_biome_colours():
 
 
 def test_player_heads(monkeypatch, tmp_path):
+    import base64, io, json as _json
+    import httpx
+    from PIL import Image
     from app import heads
-    png = b"\x89PNG\r\n\x1a\n" + b"x" * 50
+    monkeypatch.setattr(config, "STATE_DIR", str(tmp_path))
+    skin = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    skin.paste((200, 0, 0, 255), (8, 8, 16, 16))          # a red face
+    skin.paste((0, 0, 200, 255), (40, 8, 44, 16))         # a hat over its left half
+    buf = io.BytesIO(); skin.save(buf, "PNG")
+    png = b"\x89PNG\r\n\x1a\n" + b"x" * 50               # what mc-heads.net sends back
     calls = []
 
-    class R:
-        def __init__(self, code, content): self.status_code, self.content = code, content
+    def tex(url):
+        v = {"textures": {"SKIN": {"url": url}} if url else {}}
+        return {"properties": [{"name": "textures", "value": base64.b64encode(_json.dumps(v).encode()).decode()}]}
 
-    class Client:
-        def __init__(self, *a, **k): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): pass
-        async def get(self, url):
-            calls.append(url)
-            return R(200, png) if "Steve" in url else R(404, b"")
-    monkeypatch.setattr(heads.httpx, "AsyncClient", Client)
+    def answer(req):
+        u = str(req.url); calls.append(u)
+        if "api.mojang.com" in u:
+            name = u.rsplit("/", 1)[1]
+            if name == "MojangDown":
+                return httpx.Response(503)
+            return httpx.Response(200, json={"id": name + "-uuid"}) if name != "nobody_here" else httpx.Response(404)
+        if "sessionserver" in u:
+            return httpx.Response(200, json=tex(None if "Plain" in u else "http://textures.minecraft.net/texture/abc"))
+        if "textures.minecraft.net" in u:
+            assert u.startswith("https://")
+            return httpx.Response(200, content=buf.getvalue())
+        if "mc-heads.net" in u:
+            return httpx.Response(200, content=png) if "nobody_here" not in u else httpx.Response(404)
+        return httpx.Response(500)
+    monkeypatch.setattr(heads, "_transport", httpx.MockTransport(answer))
 
     async def go():
-        a = await heads.face("Steve")
-        b = await heads.face("Steve")            # cached: no second download
-        c = await heads.face("nobody_here")
-        d = await heads.face("nobody_here")      # a miss is remembered too
-        e = await heads.face(".BedrockGuy")      # not a Java name: no lookup at all
-        return a, b, c, d, e
-    a, b, c, d, e = asyncio.run(go())
-    assert a and a == b and open(a, "rb").read() == png
-    assert c is None and d is None and e is None
-    assert len(calls) == 2
+        return [await heads.face(n) for n in ("Mint__Monkey", "Mint__Monkey", "PlainSteve", "MojangDown",
+                                               "nobody_here", "nobody_here", ".BedrockGuy")]
+    mint, again, plain, down, miss1, miss2, bedrock = asyncio.run(go())
+    face = Image.open(mint)
+    assert face.size == (32, 32)
+    assert face.getpixel((2, 16))[:3] == (0, 0, 200) and face.getpixel((30, 16))[:3] == (200, 0, 0)   # hat over the face
+    assert again == mint and sum(u.endswith("minecraft/Mint__Monkey") for u in calls) == 1                           # cached
+    assert open(plain, "rb").read() == png and open(down, "rb").read() == png                         # the fallback
+    assert miss1 is None and miss2 is None and bedrock is None
+    assert sum(u.endswith("minecraft/nobody_here") for u in calls) == 1                                               # the miss is remembered
+    os.replace(mint, os.path.join(os.path.dirname(mint), "steve.png"))                                # for the routes below
+    png = open(os.path.join(os.path.dirname(mint), "steve.png"), "rb").read()
 
     monkeypatch.setattr(config, "ADMIN_PASSWORD", "pw")
     monkeypatch.setattr(state, "_path", str(tmp_path / "state.json"))
