@@ -197,6 +197,8 @@ def build_env(s: dict, worker_threads: int) -> dict:
             env["FTB_MODPACK_VERSION_ID"] = str(s["pack"]["version_id"])
     else:
         env.update(TYPE=kind.upper(), VERSION=s["mc_version"] or "LATEST")
+        if kind == "paper" and s.get("paper_channel"):
+            env["PAPER_CHANNEL"] = s["paper_channel"]     # only beta builds exist for this version so far
         lv = s.get("loader_version")
         if lv:  # imported servers: install the exact loader they were built with
             key = {"forge": "FORGE_VERSION", "neoforge": "NEOFORGE_VERSION",

@@ -385,3 +385,6 @@ button.fm-crumb:hover { background: var(--soft); color: var(--ink); }
 .fm-drop[hidden], .fm-ups[hidden], .fm-gutter[hidden] { display: none; }
 .fm-head button[data-sort=name] { justify-self: start; }
 .fm-head button.fm-num, .fm-head button.fm-when { justify-self: end; }
+.sw-opts { display: grid; gap: 8px; margin-top: 4px; }
+.sw-opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--well); }
+.sw-opt button { flex: none; }

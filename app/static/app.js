@@ -976,6 +976,68 @@ async function tabPlayers(sid, s) {
 
 // Minecraft version upgrades for plain servers: a trial copy on the new version first.
 const UPSTEP = { backup: "Backing up", copy: "Copying the server", mods: "Updating the copy's mods", trial: "Trial run", switch: "Switching over" };
+// ---- switching between vanilla, Fabric, Paper and Purpur (app/software.py)
+const SW_FROM = ["vanilla", "fabric", "quilt", "paper", "purpur"];
+const SW_ABOUT = {
+  fabric: "For Fabric mods, like Lithium for performance. The world stays exactly as it is, and you can switch back to vanilla later.",
+  paper: "Faster, and runs plugins. Players still join with plain Minecraft.",
+  purpur: "Paper with extra gameplay options. Runs the same plugins.",
+  vanilla: "The plain game. Mods stop loading; they stay in the mods folder in case you switch back.",
+};
+async function drawSoftwareCard(sid) {
+  const box = $("#swcard"); if (!box || box.hidden) return;
+  const s = LIST.find((x) => x.id === sid); if (!s) return;
+  const w = s.software, prev = s.software_prev, busy = w && ["backup", "switch"].includes(w.step), cur = LOADER[s.kind] || s.kind;
+  let status = "";
+  if (busy) {
+    status = `<p>${esc(w.msg || "")}…</p><ol class="steps"><li class="${w.step === "backup" ? "now" : "done"}">Back up</li><li class="${w.step === "switch" ? "now" : ""}">Switch and restart</li></ol>`;
+    setTimeout(async () => { if ($("#swcard") && TAB === "settings" && SEL === sid) { await refreshList(); drawSoftwareCard(sid); } }, 3000);
+  } else if (w?.step === "failed") {
+    status = `<div class="crashcard"><b>${esc(w.msg)}</b><div class="row" style="justify-content:flex-end"><button class="small" id="swok">OK</button></div></div>`;
+  } else if (w?.step === "done") {
+    status = `<div class="banner info msg">${esc(w.msg)} ${ago(w.at)}.${w.restarted ? " The first start installs it, which takes a minute." : " It installs at the next start."} <button class="small" id="swok">OK</button></div>`;
+  }
+  box.innerHTML = `<h4 style="margin-top:0">Server software</h4>
+    <p style="margin-top:0">This server runs <b>${esc(cur)}</b>.</p>${status}
+    ${busy ? "" : `<div id="swopts" class="sub">Checking what's available for ${esc(s.mc_version)}…</div>`}
+    ${prev && !busy ? `<div class="banner info msg" style="margin-top:8px">Switched from ${esc(prev.name)} ${ago(prev.at)}. To go back, undo the switch: the world returns to how it was just before (anything played since is lost). <button class="small" id="swundo">Undo</button></div>` : ""}`;
+  $("#swok") && ($("#swok").onclick = async () => { await act(() => api(`/servers/${sid}/software/dismiss`, { method: "POST" })); await refreshList(); drawSoftwareCard(sid); });
+  $("#swundo") && ($("#swundo").onclick = async () => {
+    if (!await fmConfirm(`Undo the switch and go back to ${prev.name}? The server's files return to the backup made just before, so anything played since is lost.`, "Undo")) return;
+    toast("Restoring the backup…");
+    if (await act(() => api(`/servers/${sid}/software/undo`, { method: "POST" }), `Back on ${prev.name}`)) { await refreshList(); drawSoftwareCard(sid); }
+  });
+  if (busy) return;
+  const r = await api(`/servers/${sid}/software`).catch(() => null);
+  const el = $("#swopts"); if (!el) return;
+  if (!r || !r.options.length) { el.textContent = r ? "" : "Couldn't load the options."; return; }
+  el.className = "sw-opts";
+  el.innerHTML = r.options.map((o) => `<div class="sw-opt"><div><b>${esc(o.name)}</b><div class="sub">${esc(SW_ABOUT[o.kind] || "")}</div>
+      ${o.note ? `<div class="sub" style="color:${o.ok ? "var(--warn)" : "var(--mute)"}">${esc(o.note)}</div>` : ""}</div>
+      <button class="small" data-sw="${esc(o.kind)}" ${o.ok ? "" : "disabled"}>Switch to ${esc(o.name)}</button></div>`).join("");
+  $$("[data-sw]", el).forEach((b) => (b.onclick = () => softwareModal(sid, s, r.options.find((o) => o.kind === b.dataset.sw))));
+}
+function softwareModal(sid, s, o) {
+  const paperish = ["paper", "purpur"].includes(o.kind) && s.kind === "vanilla";
+  const running = s.phase === "online" || s.phase === "starting";
+  modal(`<h2>Switch to ${esc(o.name)}?</h2>
+    <p class="muted" style="margin-top:0">From ${esc(LOADER[s.kind] || s.kind)} ${esc(s.mc_version)}. The world comes along.</p>
+    <ul class="tight">
+      <li>A backup is made first${running ? ", then the server restarts" : ""}.</li>
+      ${paperish ? `<li>${esc(o.name)} moves the Nether and the End into their own world folders the first time it starts. Going back to vanilla means undoing the switch, which restores the backup.</li>` : ""}
+      ${o.kind === "vanilla" ? "<li>Mods stop loading. They stay in the mods folder.</li>" : ""}
+      ${["paper", "purpur"].includes(o.kind) ? `<li>Add plugins in the Mods tab afterwards.</li>` : o.kind === "fabric" ? "<li>Add Fabric mods in the Mods tab afterwards. Server-side mods don't need anything on players' computers.</li>" : ""}
+      <li>Undo puts the world and the old software back from the backup.</li>
+    </ul>
+    ${o.note ? `<p style="color:var(--warn)">${esc(o.note)}</p>` : ""}
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="ghost" onclick="closeModal()">Cancel</button><button class="primary" id="swgo">Switch to ${esc(o.name)}</button></div>`);
+  $("#swgo").onclick = async () => {
+    $("#swgo").disabled = true;
+    const r = await act(() => api(`/servers/${sid}/software`, { method: "POST", body: { target: o.kind } }));
+    closeModal(); if (r) { await refreshList(); drawSoftwareCard(sid); }
+  };
+}
+
 async function drawUpgradeCard(sid) {
   const box = $("#upcard"); if (!box || box.hidden) return;
   const s = LIST.find((x) => x.id === sid); if (!s) return;
@@ -1188,7 +1250,8 @@ async function tabSettings(sid, s) {
         ${bd.note ? `<p class="sub" style="color:var(--warn)">${esc(bd.note)}</p>` : ""}
         <p class="sub">${s.restart_pending ? "Restart the server to finish turning it on. " : ""}UDP port ${bd.port} has to reach this machine: forward it on your router (or add a UDP resource in Pangolin).</p>`
       : `<p class="sub">${canBedrock ? "Adds Geyser and Floodgate. Geyser exists for Paper and Purpur 1.20.5+, and for Fabric and NeoForge only on the newest Minecraft release, so most modpacks can't use it. Bedrock players get their own UDP port." : "Geyser doesn't run on this server type (it needs Paper, Purpur, Fabric or NeoForge)."}</p>`}</div>`;
-  $("#tab").innerHTML = packCard + `<div class="card" id="upcard" ${!s.pack && s.mc_version && s.mc_version.toUpperCase() !== "LATEST" ? "" : "hidden"}></div>` + pubCard + bedCard + `<div class="card" id="ppcard" ${s.loader && !["vanilla", "paper", "purpur"].includes(s.loader) ? "" : "hidden"}></div>` + `<div class="card" id="chatcard"></div>` + `<div class="card"><h4 style="margin-top:0">Server</h4>
+  $("#tab").innerHTML = packCard + `<div class="card" id="upcard" ${!s.pack && s.mc_version && s.mc_version.toUpperCase() !== "LATEST" ? "" : "hidden"}></div>`
+    + `<div class="card" id="swcard" ${!s.pack && SW_FROM.includes(s.kind) && s.mc_version && s.mc_version.toUpperCase() !== "LATEST" ? "" : "hidden"}></div>` + pubCard + bedCard + `<div class="card" id="ppcard" ${s.loader && !["vanilla", "paper", "purpur"].includes(s.loader) ? "" : "hidden"}></div>` + `<div class="card" id="chatcard"></div>` + `<div class="card"><h4 style="margin-top:0">Server</h4>
       <label for="sn">Display name</label><input id="sn" value="${esc(s.name)}">
       <label for="hp">Address</label><div class="row" style="flex-wrap:nowrap"><input id="hp" value="${esc(prefix)}" style="flex:1"><span class="sub mono">.${esc(INFO.base_domain)}</span></div>
       <label for="as">Sleep after this many empty minutes (0 = never)</label><input id="as" type="number" min="0" value="${s.auto_sleep_min || 0}">
@@ -1218,6 +1281,7 @@ async function tabSettings(sid, s) {
   drawChatCard(sid);
   drawPlayerPack(sid);
   drawUpgradeCard(sid);
+  drawSoftwareCard(sid);
   const savePub = async (extra = {}) => {
     const r = await act(() => api(`/servers/${sid}/public-map`, { method: "PUT",
       body: { enabled: $("#pme").checked, players: $("#pmp").checked, spawn: $("#pms").checked, ...extra } }));

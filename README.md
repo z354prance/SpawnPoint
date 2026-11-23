@@ -182,6 +182,13 @@ For servers without a modpack (modpacks change version through pack updates). In
 
 Only if the copy starts cleanly is the real server stopped, switched the same way and started again. If it doesn't start, the real server isn't touched, and the card says why in plain words with the end of the trial's log. **Roll back** puts the old version, mods and world back from the backup (anything since is lost), since Minecraft can't move a world to an older version itself.
 
+## Switching server software
+
+A plain server (not a modpack) can switch between **Vanilla**, **Fabric**, **Paper** and **Purpur** in **Settings → Server software**. The world comes along. SpawnPoint checks there's a build for the server's Minecraft version, backs up, switches, and restarts it if it was running. When Paper only has beta builds for that version, it says so and uses them.
+
+- Vanilla can switch to Fabric, Paper or Purpur. Fabric can switch back to vanilla (mods stay in the folder but stop loading). Paper and Purpur can switch between each other.
+- Paper and Purpur keep the Nether and the End in their own world folders, so going back to vanilla from them is done with **Undo**, which restores the backup made just before the switch. Anything played since then is lost.
+
 ## Mod and plugin updates
 
 On servers without a modpack, the **Mods** tab checks once a day which mods and plugins have a newer build for the server's loader and Minecraft version, by asking Modrinth about each file's checksum, so it works however the file got there. **Update** one or all; the new file is checked against Modrinth's checksum before it replaces the old one, and the old files are kept in `.spawnpoint/old-mods/` so **Undo that update** can put them back. Restart the server to load the new versions. Files that didn't come from Modrinth can't be checked. An alert can say when updates are waiting.

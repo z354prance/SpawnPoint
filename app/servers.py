@@ -130,7 +130,8 @@ async def reconcile_install(s: dict) -> dict:
     found = await asyncio.to_thread(importer.detect, dockerctl.server_dir(sid))
     kind, mc = found.get("kind"), found.get("mc_version")
     changed = {}
-    if kind in ("forge", "neoforge", "fabric", "quilt", "paper", "purpur") and kind != s.get("loader"):
+    same_family = {kind, s.get("loader")} <= {"paper", "purpur"}      # Purpur uses Paper's config files
+    if kind in ("forge", "neoforge", "fabric", "quilt", "paper", "purpur") and kind != s.get("loader") and not same_family:
         changed["loader"] = kind
     if mc and mc != s.get("mc_version") and kind:
         changed["mc_version"] = mc

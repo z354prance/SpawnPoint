@@ -328,6 +328,8 @@ _ACTIONS = [
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/player-pack$", "server.player-pack"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/upgrade$", "server.upgrade"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/upgrade/rollback$", "server.upgrade-rollback"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/software$", "server.software"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/software/undo$", "server.software-undo"),
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/markers/(?P<d>[^/]+)$", "map.marker"),
     ("DELETE", r"^/api/servers/(?P<sid>[^/]+)/markers/(?P<d>[^/]+)$", "map.marker"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/mod-updates/rollback$", "mods.rollback"),
@@ -1253,6 +1255,52 @@ def upgrade_dismiss(sid: str):
     s = _get(sid)
     if (s.get("upgrade") or {}).get("step") in ("done", "failed"):
         state.update(sid, upgrade=None)
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ server software (vanilla/Fabric/Paper/Purpur)
+@app.get("/api/servers/{sid}/software", dependencies=moderator)
+async def software_options(sid: str):
+    """What this server can switch to, with whether each has a build for its version."""
+    from . import software
+    s = _get(sid)
+    opts = software.choices(s)
+    checks = await asyncio.gather(*(software.check(s, t) for t in opts))
+    return {"current": software.current(s), "options": [{"kind": t, "name": software.NAMES[t], **c} for t, c in zip(opts, checks)]}
+
+
+class SoftwareReq(BaseModel):
+    target: str
+
+
+@app.post("/api/servers/{sid}/software", dependencies=moderator)
+async def software_switch(sid: str, body: SoftwareReq, request: Request):
+    from . import software
+    _get(sid)
+    request.state.detail = f"to {software.NAMES.get(body.target, body.target)}"
+    try:
+        return await software.switch(sid, body.target)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/api/servers/{sid}/software/undo", dependencies=moderator)
+async def software_undo(sid: str):
+    from . import software
+    _get(sid)
+    try:
+        return await software.undo(sid)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except backups.BackupError as e:
+        raise HTTPException(500, f"Restoring the backup failed: {e}")
+
+
+@app.post("/api/servers/{sid}/software/dismiss", dependencies=moderator)
+def software_dismiss(sid: str):
+    s = _get(sid)
+    if (s.get("software") or {}).get("step") in ("done", "failed"):
+        state.update(sid, software=None)
     return {"ok": True}
 
 
