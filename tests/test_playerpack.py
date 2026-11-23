@@ -69,7 +69,7 @@ def test_prism_zip(tmp_path, monkeypatch):
     z = zipfile.ZipFile(io.BytesIO(playerpack.prism_zip(s, "https://sp.example.com/p/tok/pack/pack.toml")))
     cfg = z.read("instance.cfg").decode()
     assert "OverrideCommands=true" in cfg
-    assert 'PreLaunchCommand="$INST_JAVA" -jar packwiz-installer-bootstrap.jar https://sp.example.com/p/tok/pack/pack.toml' in cfg
+    assert 'PreLaunchCommand="\\"$INST_JAVA\\" -jar packwiz-installer-bootstrap.jar https://sp.example.com/p/tok/pack/pack.toml"' in cfg
     comps = json.loads(z.read("mmc-pack.json"))["components"]
     assert {"uid": "net.neoforged", "version": "21.1.200"} in comps
     assert z.read(".minecraft/packwiz-installer-bootstrap.jar") == b"JAR"

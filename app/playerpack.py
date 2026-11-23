@@ -267,6 +267,10 @@ def bootstrap_jar() -> bytes:
     return r.content
 
 
+def _qt_ini(v: str) -> str:
+    return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def prism_zip(s: dict, pack_url: str) -> bytes:
     """A Prism Launcher instance: the right Minecraft and loader, the server in the
     multiplayer list, and packwiz-installer run before every launch."""
@@ -283,7 +287,9 @@ def prism_zip(s: dict, pack_url: str) -> bytes:
     cfg = "\n".join([
         "[General]", "ConfigVersion=1.2", "InstanceType=OneSix", f"name={name}", "iconKey=default",
         "OverrideCommands=true",
-        f'PreLaunchCommand="$INST_JAVA" -jar packwiz-installer-bootstrap.jar {pack_url}', ""])
+        # Prism's settings file is Qt's INI format: a value starting with a quote is read as a
+        # quoted string, so the whole command is quoted and the quotes inside it escaped.
+        "PreLaunchCommand=" + _qt_ini(f'"$INST_JAVA" -jar packwiz-installer-bootstrap.jar {pack_url}'), ""])
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("instance.cfg", cfg)
