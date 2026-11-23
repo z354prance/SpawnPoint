@@ -329,6 +329,10 @@ def configure_automodpack(base: str, real_ip: bool, page_url: str, extra: dict[s
     d = os.path.join(base, "automodpack")
     p, cur = _amp_config(base)
     link = page_url or "https://modrinth.com/project/automodpack"
+    if cur is None:
+        # AutoModpack hasn't started yet. It makes its own folder on first start; making
+        # it here would leave it owned by SpawnPoint and unwritable for the server.
+        return
     if cur is not None:
         if "connection-mode" in cur:                           # newer format, kebab-case
             want = {"connection-mode": "MAGIC", "bind-port": AUTOMODPACK_PORT, "advertised-endpoint-port": -1,
@@ -346,6 +350,25 @@ def configure_automodpack(base: str, real_ip: bool, page_url: str, extra: dict[s
             with open(p, "w", encoding="utf-8") as f:
                 json.dump(cur, f, indent=2)
     _sync_host_files(os.path.join(d, "host-modpack", "main"), extra or {})
+    own_like(d, base)
+
+
+def own_like(path: str, ref: str) -> None:
+    """Give everything under path to the owner of ref (the server's folder), so the game,
+    which doesn't run as SpawnPoint's user, can write there."""
+    try:
+        st = os.stat(ref)
+    except OSError:
+        return
+    if os.geteuid() != 0:
+        return
+    for dirpath, dirnames, filenames in os.walk(path):
+        for n in [dirpath] + [os.path.join(dirpath, f) for f in filenames]:
+            try:
+                if os.lstat(n).st_uid != st.st_uid or os.lstat(n).st_gid != st.st_gid:
+                    os.lchown(n, st.st_uid, st.st_gid)
+            except OSError:
+                pass
 
 
 def _sync_host_files(host: str, extra: dict[str, str]) -> None:
@@ -413,13 +436,34 @@ async def set_sync(sid: str, on: bool) -> str:
     return "Removed AutoModpack. Restart the server to finish."
 
 
+async def repin(s: dict) -> None:
+    """Earlier SpawnPoint versions could pin a test build of AutoModpack (5.0 release
+    candidates fail to start on some servers). Switch it to the newest stable one."""
+    if not settings(s).get("sync"):
+        return
+    m = next((m for m in s.get("managed_mods", []) if m.get("slug") == "automodpack"), None)
+    if not m and automodpack_jar(s):                           # added straight to the mods folder
+        f = os.path.basename(automodpack_jar(s))
+        m = {"filename": f, "version": f}
+    if m and re.search(r"(?i)(rc|beta|alpha|pre)", m.get("version", "")):
+        try:
+            r = await servers.install_mod(state.get(s["id"]), "automodpack")
+            old = os.path.join(servers.mods_dir(s), m.get("filename", ""))
+            if m.get("filename") and m["filename"] != r.get("filename") and os.path.isfile(old):
+                os.remove(old)                                 # or two copies would clash
+            log.info("[%s] AutoModpack %s -> %s", s["id"], m.get("version"), r.get("version"))
+        except Exception as e:
+            log.warning("[%s] couldn't switch AutoModpack to a stable version: %s", s["id"], e)
+
+
 def before_boot(s: dict) -> None:
     """Called before each start: keep AutoModpack's settings and extra files current."""
     if not settings(s).get("sync"):
         return
+    base = dockerctl.server_dir(s["id"])
+    own_like(os.path.join(base, "automodpack"), base)          # repairs a folder an earlier version made
     try:
-        configure_automodpack(dockerctl.server_dir(s["id"]), bool(s.get("real_ip")), page_url(s),
-                              client_only_extras(s))
+        configure_automodpack(base, bool(s.get("real_ip")), page_url(s), client_only_extras(s))
     except Exception as e:
         log.warning("[%s] couldn't set up AutoModpack: %s", s["id"], e)
 

@@ -136,7 +136,8 @@ async def find_version(project: str, loader: str, mc_version: str) -> dict | Non
         vs = r.json()
         if not vs:
             return None
-        v = vs[0]
+        # Stable builds first: a mod's newest upload is sometimes a beta or release candidate.
+        v = next((x for x in vs if x.get("version_type") == "release"), vs[0])
         f = next((x for x in v["files"] if x.get("primary")), v["files"][0])
         pr = await c.get(f"{MR}/project/{project}")
         info = pr.json() if pr.status_code == 200 else {}

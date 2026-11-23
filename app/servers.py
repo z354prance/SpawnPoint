@@ -323,6 +323,8 @@ async def _boot(s: dict, burst: bool = False) -> None:
     if not s.get("first_boot"):
         await asyncio.to_thread(ensure_rcon, s)
         from . import playerpack
+        await playerpack.repin(s)
+        s = state.get(s["id"])
         await asyncio.to_thread(playerpack.before_boot, s)
         await asyncio.to_thread(apply_empty_pause, s)
         # Container is stopped here, so it's safe to (re)apply the real-IP setup.

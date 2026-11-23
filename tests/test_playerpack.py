@@ -81,7 +81,7 @@ def test_automodpack_config(tmp_path):
     cfgp = base / "automodpack" / "automodpack-server.json"
     extra = tmp_path / "oculus.jar.disabled"; extra.write_bytes(b"x")
     playerpack.configure_automodpack(str(base), True, "https://sp/p/t", {})
-    assert not cfgp.exists()                                    # AutoModpack writes it on its first start
+    assert not (base / "automodpack").exists()                  # AutoModpack makes it on its first start
     # 4.x: shares the game's port
     cfgp.parent.mkdir(parents=True, exist_ok=True)
     cfgp.write_text(json.dumps({"bindPort": 1234, "nagClickableLink": "x", "validateSecrets": True, "bind-port": 25580}))
@@ -188,6 +188,10 @@ def test_automodpack_in_every_download(tmp_path, monkeypatch):
     extra = playerpack.client_only_extras(s)
     assert set(extra) == {"mods/oculus-1.8.jar", "config/jei/jei.toml"}
     playerpack.before_boot(s)
+    assert not (base / "automodpack").exists()                  # not before AutoModpack's first start
+    (base / "automodpack").mkdir()
+    (base / "automodpack" / "automodpack-server.json").write_text('{"bindPort": -1}')
+    playerpack.before_boot(s)
     host = base / "automodpack" / "host-modpack" / "main"
     assert (host / "config" / "jei" / "jei.toml").exists() and (host / "mods" / "oculus-1.8.jar").exists()
     assert not (host / "config" / "discord.toml").exists()
@@ -236,3 +240,30 @@ def test_sync_waits_for_the_jar(tmp_path, monkeypatch):
     assert not playerpack.sync_active(s)
     assert "mods/create-1.21.1-6.0.jar" in [n for n, _ in playerpack.plain_zip_files(s)]
     assert main._pack_view("a")["sync_pending"] is True
+
+
+def test_repin_test_build(tmp_path, monkeypatch):
+    base, s = _with_amp(tmp_path, monkeypatch)
+    rc = base / "mods" / "automodpack-mc1.21.1-neoforge-5.0.0-rc.7.jar"
+    os.rename(base / "mods" / "automodpack-mc1.21.1-neoforge-4.0.7.jar", rc)
+    state.update("a", managed_mods=[{"project_id": "k68glP2e", "slug": "automodpack", "version": "5.0.0-rc.7",
+                                     "filename": rc.name, "version_id": "x", "title": "AutoModpack"}])
+
+    async def install(s, project):
+        return {"version": "4.0.7", "filename": "automodpack-mc1.21.1-neoforge-4.0.7.jar"}
+    monkeypatch.setattr(servers, "install_mod", install)
+    asyncio.run(playerpack.repin(state.get("a")))
+    assert not rc.exists()
+
+
+def test_catalog_prefers_stable(monkeypatch):
+    from app import catalog
+    import httpx
+    vs = [{"id": "rc", "project_id": "p", "version_number": "5.0.0-rc.7", "version_type": "beta", "files": [{"filename": "a-rc.jar", "primary": True}]},
+          {"id": "ok", "project_id": "p", "version_number": "4.0.7", "version_type": "release", "files": [{"filename": "a.jar", "primary": True}]}]
+
+    def handler(req):
+        return httpx.Response(200, json=vs if req.url.path.endswith("/version") else {"slug": "a", "title": "A"})
+    real = httpx.AsyncClient
+    monkeypatch.setattr(catalog.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    assert asyncio.run(catalog.find_version("a", "neoforge", "1.21.1"))["version"] == "4.0.7"
