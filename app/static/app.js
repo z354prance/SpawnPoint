@@ -19,8 +19,10 @@ async function api(path, opts = {}) {
   return data;
 }
 function toast(msg, err = false) {
+  // Errors stay long enough to read (or copy); click any toast to close it.
   const t = $("#toast"); t.textContent = msg; t.className = "toast" + (err ? " err" : "");
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.add("hidden"), 4500);
+  t.title = "Click to close"; t.onclick = () => t.classList.add("hidden");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.add("hidden"), err ? 15000 : 4500);
 }
 async function act(fn, okMsg) { try { const r = await fn(); if (okMsg) toast(okMsg); return r; } catch (e) { toast(e.message, true); } }
 function modal(html) { $("#modal-card").innerHTML = html; $("#modal").classList.remove("hidden"); }

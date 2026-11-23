@@ -36,10 +36,19 @@ _DUPLICATE = re.compile(r"(?:Found duplicate mods|Duplicate mods? found)[^\n]*",
 _DUP_ID = re.compile(r"Mod ID: '([^']+)' from mod files: (.+)")
 
 
+def _after_shutdown(path: str) -> bool:
+    """A watchdog report written after the game had already stopped (Java just didn't
+    exit): its thread dump has no "Server thread" left. Not a crash in itself."""
+    text = _read(path, 2_000_000)
+    return "Description: Watching Server" in text and '"Server thread"' not in text
+
+
 def _newest_report(base: str, since: float) -> str | None:
     d = os.path.join(base, "crash-reports")
-    files = [f for f in glob.glob(os.path.join(d, "*.txt")) if os.path.getmtime(f) >= since - 60]
-    return max(files, key=os.path.getmtime) if files else None
+    files = sorted((f for f in glob.glob(os.path.join(d, "*.txt")) if os.path.getmtime(f) >= since - 60),
+                   key=os.path.getmtime, reverse=True)
+    real = [f for f in files if not _after_shutdown(f)]
+    return real[0] if real else None
 
 
 def _read(path: str, limit: int = 400_000) -> str:

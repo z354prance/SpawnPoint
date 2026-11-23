@@ -92,3 +92,50 @@ def test_started_without_console(tmp_path, monkeypatch):
     ex = crashinfo.explain("s", ['[Server thread/INFO]: Done (1.363s)! For help, type "help"',
                                  "mc-server-runner	Failed to stop using rcon-cli"], mods_dir=mods)
     assert ex["title"].startswith("The server started, but SpawnPoint couldn't reach its console")
+
+
+def test_hung_shutdown_is_not_the_crash(tmp_path, monkeypatch):
+    """The game stopped and saved, Java didn't exit, and the watchdog wrote a report a
+    minute later. That report isn't a crash, and a plain stop isn't either."""
+    from app import servers, state
+    state.put({"id": "h", "name": "H", "phase": "online", "pregen": {"stage": "done"}})
+    stop = ["[19:12:38] [Server thread/INFO] [minecraft/MinecraftServer]: Stopping server",
+            "[19:12:38] [Server thread/INFO] [minecraft/MinecraftServer]: ThreadedAnvilChunkStorage: All dimensions are saved",
+            "[19:13:41] [Server Watchdog/FATAL] [minecraft/ServerWatchdog]: A single server tick took 60000004.00 seconds (should be max 0.05)",
+            "[19:13:41] [Server Watchdog/ERROR] This crash report has been saved to: /data/crash-reports/crash.txt"]
+    assert servers._crash_reason("h", {"code": 1}, ["[19:10:00] Done (40s)!"] + stop) is None
+    real = ["[19:12:30] [Server thread/ERROR] This crash report has been saved to: /data/crash-reports/real.txt"]
+    assert servers._crash_reason("h", {"code": 1}, real + stop) == "crashed (a crash report was saved)"
+    # the report picker skips the watchdog report about the hung exit
+    d = tmp_path / "crash-reports"
+    d.mkdir()
+    (d / "real.txt").write_text('Description: Exception ticking world\n"Server thread" prio=5\n')
+    import os, time
+    (d / "watch.txt").write_text('Description: Watching Server\n"Server Watchdog" daemon\n')
+    os.utime(d / "watch.txt", (time.time() + 5, time.time() + 5))
+    from app import crashinfo
+    assert crashinfo._newest_report(str(tmp_path), time.time() - 100).endswith("real.txt")
+
+
+def test_watch_exit_ends_a_stuck_server(monkeypatch):
+    from app import dockerctl, servers, state
+    state.put({"id": "w", "name": "W", "phase": "online", "pregen": {"stage": "done"}})
+
+    class Hub:
+        seq = 2
+        def since(self, n):
+            return [(1, "Stopping server"), (2, "ThreadedAnvilChunkStorage: All dimensions are saved")][n:]
+
+    class C:
+        status = "running"
+        killed = False
+        def kill(self):
+            C.killed = True
+    monkeypatch.setattr(dockerctl, "hub", lambda sid: Hub())
+    monkeypatch.setattr(dockerctl, "get_container", lambda sid: C())
+    servers._exit_watch.pop("w", None)
+    servers.watch_exit("w")
+    assert not C.killed                                         # gives it a moment first
+    servers._exit_watch["w"]["saved_at"] -= servers.EXIT_GRACE_S + 1
+    servers.watch_exit("w")
+    assert C.killed and state.get("w")["exit_hung"]

@@ -822,11 +822,70 @@ _CRASH_MARKERS = ("This crash report has been saved", "Preparing crash report", 
                   "Considering it to be crashed", "Exception in server tick loop", "OutOfMemoryError")
 
 
+# ------------------------------------------------------------------ stuck after shutting down
+# Some modpacks leave threads running after the game has stopped and saved, so Java never
+# exits. A minute later the watchdog writes a "crash" report about it, and that looked like
+# a new crash every time the server stopped, so restarts after a crash looped. Once the
+# world is saved, SpawnPoint ends the process itself.
+_exit_watch: dict[str, dict] = {}
+EXIT_GRACE_S = 15
+
+
+def _saved_and_stopping(lines) -> bool:
+    stopping = False
+    for line in lines:
+        if "Stopping server" in line:
+            stopping = True
+        elif stopping and "All dimensions are saved" in line:
+            return True
+    return False
+
+
+def watch_exit(sid: str) -> None:
+    """Called every few seconds for running servers (from the stats loop)."""
+    h = dockerctl.hub(sid)
+    w = _exit_watch.setdefault(sid, {"seq": 0, "stopping": False, "saved_at": None})
+    if h.seq < w["seq"]:                                      # the log was reset by a new start
+        w.update(seq=0, stopping=False, saved_at=None)
+    for n, line in h.since(w["seq"]):
+        w["seq"] = n
+        if "Stopping server" in line:
+            w["stopping"] = True
+        elif w["stopping"] and "All dimensions are saved" in line and not w["saved_at"]:
+            w["saved_at"] = time.time()
+    if w["saved_at"] and time.time() - w["saved_at"] > EXIT_GRACE_S:
+        c = dockerctl.get_container(sid)
+        if c and c.status == "running":
+            log.warning("[%s] the game stopped and saved but didn't exit; ending it", sid)
+            state.update(sid, exit_hung=time.time())
+            try:
+                c.kill()
+            except Exception as e:
+                log.info("[%s] couldn't end the stuck server: %s", sid, e)
+        w.update(saved_at=None, stopping=False)
+
+
+def _before_shutdown(lines: list[str]) -> list[str]:
+    """The log up to the last "Stopping server": what came after is the shutdown itself,
+    including any watchdog report about a shutdown that hung."""
+    for i in range(len(lines) - 1, -1, -1):
+        if "Stopping server" in lines[i]:
+            return lines[:i]
+    return lines
+
+
 def _crash_reason(sid: str, info: dict, lines: list[str]) -> str | None:
     """Why the server went down if it wasn't asked to, or None for a clean stop
     (someone typed `stop` in the console)."""
-    if info.get("oom"):
+    if info.get("oom") and not (state.servers().get(sid) or {}).get("exit_hung"):
         return "ran out of memory (killed by the system)"
+    if _saved_and_stopping(lines):
+        # It stopped and saved properly. A crash shows up before that point; anything after
+        # it (like the watchdog complaining that Java didn't exit) isn't the cause.
+        lines = _before_shutdown(lines)
+        hit = next((l for l in reversed(lines) if any(m in l for m in _CRASH_MARKERS)), None)
+        if not hit:
+            return None
     hit = next((l for l in reversed(lines) if any(m in l for m in _CRASH_MARKERS)), None)
     if hit:
         if "A single server tick took" in hit or "Considering it to be crashed" in hit:
@@ -881,9 +940,10 @@ async def check_crash(sid: str) -> None:
     info = await asyncio.to_thread(dockerctl.exit_info, sid)
     if info is None:
         return
-    lines = await asyncio.to_thread(dockerctl.recent_logs, sid, 300)
+    lines = await asyncio.to_thread(dockerctl.recent_logs, sid, 1500)
     topology.allocator().release(sid)
     reason = _crash_reason(sid, info, lines)
+    state.update(sid, exit_hung=None)
     if reason is None:
         set_phase(sid, "stopped", "Stopped from the console")
         activity.record("SpawnPoint", "system", "", "server.stop", sid, "Stopped with the stop command", True)

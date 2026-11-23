@@ -71,6 +71,7 @@ async def stats_loop():
                 if st != "running" and s.get("phase") == "online":
                     await servers.check_crash(sid)
                 if st == "running":
+                    await asyncio.to_thread(servers.watch_exit, sid)
                     entry["started_at"] = await asyncio.to_thread(dockerctl.started_at, sid)
                     if s.get("phase") == "online":
                         lagwatch.note(sid, entry.get("p95"), entry.get("mspt"), entry.get("online"))
@@ -106,6 +107,8 @@ async def lifespan(app: FastAPI):
     from . import modupdates
     from . import chatbridge, upgrades
     await asyncio.to_thread(upgrades.recover)
+    from . import files as _files
+    await asyncio.to_thread(_files.purge_old)          # Recently deleted keeps things for 7 days
     extra = [asyncio.create_task(modupdates.loop()), asyncio.create_task(chatbridge.loop())]
     from . import proxy
     mc = await proxy.serve()
@@ -298,6 +301,15 @@ _ACTIONS = [
     ("DELETE", r"^/api/servers/(?P<sid>[^/]+)/mods/managed/(?P<d>[^/]+)$", "mods.remove"),
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/properties$", "server.properties"),
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/files$", "files.edit"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/files/mkdir$", "files.mkdir"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/files/rename$", "files.rename"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/files/move$", "files.move"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/files/delete$", "files.delete"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/files/trash/restore$", "files.restore"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/files/trash/empty$", "files.empty-trash"),
+    ("PUT", r"^/api/servers/(?P<sid>[^/]+)/files/upload$", "files.upload"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/files/compress$", "files.compress"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/files/extract$", "files.extract"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/backups$", "backup.create"),
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/backups/keep$", "backup.retention"),
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/schedule$", "schedule.change"),
@@ -876,35 +888,173 @@ def put_props(sid: str, values: dict[str, str]):
 
 
 # ------------------------------------------------------------------ files
+from . import files as fm
+
+
+def _fs(fn, *a, **k):
+    try:
+        return fn(*a, **k)
+    except fm.FileError as e:
+        raise HTTPException(e.status, str(e))
+    except PermissionError as e:
+        raise HTTPException(403, f"Not allowed: {e.filename or e}")
+    except OSError as e:
+        raise HTTPException(409, f"{e.strerror or e}{': ' + os.path.basename(e.filename) if e.filename else ''}")
+
+
+async def _fsa(fn, *a, **k):
+    return await asyncio.to_thread(_fs, fn, *a, **k)
+
+
 @app.get("/api/servers/{sid}/files", dependencies=moderator)
-def list_files(sid: str, path: str = ""):
+async def list_files(sid: str, path: str = ""):
+    """A folder's contents, or (for older pages) a file's text."""
     _get(sid)
-    p = _safe_path(sid, path)
-    if os.path.isdir(p):
-        entries = []
-        for n in sorted(os.listdir(p), key=lambda x: (not os.path.isdir(os.path.join(p, x)), x.lower())):
-            fp = os.path.join(p, n)
-            entries.append({"name": n, "dir": os.path.isdir(fp),
-                            "size": os.path.getsize(fp) if os.path.isfile(fp) else None})
-        return {"path": path, "entries": entries}
-    if os.path.getsize(p) > 2 * 2**20:
-        raise HTTPException(413, "File too large to edit here")
-    with open(p, encoding="utf-8", errors="replace") as f:
-        return {"path": path, "content": f.read()}
+    p = _fs(fm.resolve, sid, path) if path else fm.root(sid)
+    if os.path.isfile(p):
+        return await _fsa(fm.read, sid, path)
+    return await _fsa(fm.listdir, sid, path)
+
+
+@app.get("/api/servers/{sid}/files/text", dependencies=moderator)
+async def read_file(sid: str, path: str):
+    _get(sid)
+    return await _fsa(fm.read, sid, path)
 
 
 class FileWrite(BaseModel):
     path: str
     content: str
+    mtime: float | None = None
+    create: bool = False
 
 
 @app.put("/api/servers/{sid}/files", dependencies=moderator)
-def write_file(sid: str, body: FileWrite):
+async def write_file(sid: str, body: FileWrite, request: Request):
     _get(sid)
-    p = _safe_path(sid, body.path)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(body.content)
-    return {"ok": True}
+    request.state.detail = body.path
+    return await _fsa(fm.write, sid, body.path, body.content, body.mtime, body.create)
+
+
+class PathReq(BaseModel):
+    path: str
+
+
+class RenameReq(BaseModel):
+    path: str
+    name: str
+
+
+class PathsReq(BaseModel):
+    paths: list[str]
+    to: str = ""
+    mode: str = "move"          # or "copy"
+    overwrite: bool = False
+    name: str = ""
+
+
+@app.post("/api/servers/{sid}/files/mkdir", dependencies=moderator)
+async def make_folder(sid: str, body: PathReq, request: Request):
+    _get(sid)
+    request.state.detail = body.path
+    return await _fsa(fm.mkdir, sid, body.path)
+
+
+@app.post("/api/servers/{sid}/files/rename", dependencies=moderator)
+async def rename_file(sid: str, body: RenameReq, request: Request):
+    _get(sid)
+    request.state.detail = f"{body.path} -> {body.name}"
+    return await _fsa(fm.rename, sid, body.path, body.name)
+
+
+@app.post("/api/servers/{sid}/files/move", dependencies=moderator)
+async def move_files(sid: str, body: PathsReq, request: Request):
+    _get(sid)
+    request.state.detail = f"{', '.join(body.paths[:5])}{'…' if len(body.paths) > 5 else ''} -> /{body.to}"
+    return await _fsa(fm.move, sid, body.paths, body.to, body.mode == "copy", body.overwrite)
+
+
+@app.post("/api/servers/{sid}/files/delete", dependencies=moderator)
+async def delete_files(sid: str, body: PathsReq, request: Request):
+    _get(sid)
+    request.state.detail = ", ".join(body.paths[:5]) + ("…" if len(body.paths) > 5 else "")
+    return await _fsa(fm.delete, sid, body.paths)
+
+
+@app.get("/api/servers/{sid}/files/trash", dependencies=moderator)
+async def trash_list(sid: str):
+    _get(sid)
+    return await _fsa(fm.trash_list, sid)
+
+
+class TrashReq(BaseModel):
+    ids: list[str] | None = None
+
+
+@app.post("/api/servers/{sid}/files/trash/restore", dependencies=moderator)
+async def trash_restore(sid: str, body: TrashReq, request: Request):
+    _get(sid)
+    r = await _fsa(fm.restore, sid, body.ids or [])
+    request.state.detail = ", ".join(r["restored"][:5])
+    return r
+
+
+@app.post("/api/servers/{sid}/files/trash/empty", dependencies=admin)
+async def trash_empty(sid: str, body: TrashReq):
+    _get(sid)
+    return await _fsa(fm.empty_trash, sid, body.ids)
+
+
+@app.put("/api/servers/{sid}/files/upload", dependencies=moderator)
+async def upload_file(sid: str, path: str, request: Request, overwrite: bool = False):
+    """One file per request, streamed to disk (folders upload as many requests)."""
+    _get(sid)
+    request.state.detail = path
+    try:
+        return await fm.upload(sid, path, request.stream(), overwrite)
+    except fm.FileError as e:
+        raise HTTPException(e.status, str(e))
+    except OSError as e:
+        raise HTTPException(409, e.strerror or str(e))
+
+
+@app.get("/api/servers/{sid}/files/download", dependencies=moderator)
+async def download_files(sid: str, request: Request, path: list[str] = Query(default=[]), inline: bool = False):
+    s = _get(sid)
+    if not path:
+        raise HTTPException(400, "Nothing to download")
+    ps = [_fs(fm.resolve, sid, p) for p in path]
+    if len(ps) == 1 and os.path.isfile(ps[0]):
+        name = os.path.basename(ps[0])
+        if inline:
+            return FileResponse(ps[0], headers={"Content-Disposition": "inline", "Cache-Control": "no-store",
+                                                "Content-Security-Policy": "sandbox"})
+        return FileResponse(ps[0], filename=name)
+    name = os.path.basename(ps[0]) if len(ps) == 1 else f"{s['name']}-files"
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "-", name or s["name"]).strip("-") or "files"
+    record(request, "files.download", sid, ", ".join(path[:5]))
+    return StreamingResponse(fm.zip_stream(sid, path), media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
+
+
+@app.post("/api/servers/{sid}/files/compress", dependencies=moderator)
+async def compress_files(sid: str, body: PathsReq, request: Request):
+    _get(sid)
+    request.state.detail = f"{', '.join(body.paths[:5])} -> {body.name}"
+    return await _fsa(fm.compress, sid, body.paths, body.name or "archive.zip")
+
+
+@app.post("/api/servers/{sid}/files/extract", dependencies=moderator)
+async def extract_file(sid: str, body: PathReq, request: Request):
+    _get(sid)
+    request.state.detail = body.path
+    return await _fsa(fm.extract, sid, body.path)
+
+
+@app.get("/api/servers/{sid}/files/search", dependencies=moderator)
+async def search_files(sid: str, q: str, path: str = ""):
+    _get(sid)
+    return await _fsa(fm.search, sid, q, path)
 
 
 # ------------------------------------------------------------------ backups

@@ -357,21 +357,8 @@ def configure_automodpack(base: str, real_ip: bool, page_url: str, extra: dict[s
 
 
 def own_like(path: str, ref: str) -> None:
-    """Give everything under path to the owner of ref (the server's folder), so the game,
-    which doesn't run as SpawnPoint's user, can write there."""
-    try:
-        st = os.stat(ref)
-    except OSError:
-        return
-    if os.geteuid() != 0:
-        return
-    for dirpath, dirnames, filenames in os.walk(path):
-        for n in [dirpath] + [os.path.join(dirpath, f) for f in filenames]:
-            try:
-                if os.lstat(n).st_uid != st.st_uid or os.lstat(n).st_gid != st.st_gid:
-                    os.lchown(n, st.st_uid, st.st_gid)
-            except OSError:
-                pass
+    from . import files
+    files.own_like(path, ref)
 
 
 def _sync_host_files(host: str, extra: dict[str, str]) -> None:
