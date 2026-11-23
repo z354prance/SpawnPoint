@@ -106,3 +106,36 @@ def test_listing_shows_what_players_get_from_the_server(srv, monkeypatch):
     r = c.get("/api/servers/t/player-mods").json()
     assert {m["file"] for m in r["mods"]} == {"voxy-0.2.jar", "sodium-0.7.jar"}
     assert "lss-0.22.jar" in r["from_server"] and "voxy-0.2.jar" not in r["from_server"]
+
+
+def test_dependency_matches_the_mod_that_needs_it(srv, monkeypatch):
+    """Voxy 0.2.20 crashed with Sodium 0.9.3, newer than the Sodium it was built against."""
+    def v(pid, num, date, fname, deps=()):
+        return {"id": f"{pid}-{num}", "project_id": pid, "version_number": num, "version_type": "beta",
+                "date_published": date, "files": [{"primary": True, "filename": fname, "url": f"https://cdn.modrinth.com/{fname}"}],
+                "dependencies": list(deps)}
+    sodium = [v("sodium", "0.9.3", "2026-11-10T00:00:00Z", "sodium-0.9.3.jar"),
+              v("sodium", "0.9.2", "2026-10-20T00:00:00Z", "sodium-0.9.2.jar")]
+    voxy = [v("voxy", "0.2.20", "2026-11-01T00:00:00Z", "voxy-0.2.20.jar",
+              [{"project_id": "sodium", "dependency_type": "required"}])]
+    pinned = [v("pinned", "1.0", "2026-11-15T00:00:00Z", "pinned-1.0.jar",
+                [{"project_id": "sodium", "version_id": "sodium-0.9.3", "dependency_type": "required"}])]
+
+    def net(req):
+        p = req.url.path
+        if p == "/v2/version_files":
+            return httpx.Response(200, json={})
+        if p.startswith("/v2/version/"):
+            vid = p.rsplit("/", 1)[1]
+            return httpx.Response(200, json=next(x for x in sodium if x["id"] == vid))
+        if p.endswith("/version"):
+            return httpx.Response(200, json={"voxy": voxy, "sodium": sodium, "pinned": pinned}[p.split("/")[3]])
+        if p.startswith("/v2/project/"):
+            return httpx.Response(200, json={"title": p.split("/")[3]})
+        return httpx.Response(200, content=b"jar")
+    monkeypatch.setattr(playermods, "_transport", httpx.MockTransport(net))
+    r = asyncio.run(playermods.add("t", "voxy"))
+    assert [a["file"] for a in r["added"]] == ["voxy-0.2.20.jar", "sodium-0.9.2.jar"]
+    playermods.remove("t", "voxy-0.2.20.jar"); playermods.remove("t", "sodium-0.9.2.jar")
+    r = asyncio.run(playermods.add("t", "pinned"))
+    assert [a["file"] for a in r["added"]] == ["pinned-1.0.jar", "sodium-0.9.3.jar"]       # named exactly: that one

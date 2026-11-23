@@ -89,7 +89,15 @@ async def _present(c: httpx.AsyncClient, s: dict) -> set[str]:
     return ids
 
 
-async def _version(c: httpx.AsyncClient, s: dict, project: str) -> dict | None:
+async def _version(c: httpx.AsyncClient, s: dict, project: str, exact: str | None = None,
+                   before: str | None = None) -> dict | None:
+    """The build to use. A dependency names its exact version when the mod lists one;
+    otherwise it's the newest build from before the mod that needs it was released, since a
+    mod is built against what existed then (Voxy breaks on a newer Sodium than its own)."""
+    if exact:
+        r = await c.get(f"{catalog.MR}/version/{exact}")
+        if r.status_code == 200:
+            return r.json()
     loader = s.get("loader") or s.get("kind")
     params = {"loaders": json.dumps([catalog.LOADER_FACET.get(loader, loader)])}
     if s.get("mc_version"):
@@ -99,7 +107,12 @@ async def _version(c: httpx.AsyncClient, s: dict, project: str) -> dict | None:
         return None
     r.raise_for_status()
     vs = r.json()
-    return next((v for v in vs if v.get("version_type") == "release"), vs[0]) if vs else None
+    if not vs:
+        return None
+    if before:
+        older = [v for v in vs if (v.get("date_published") or "") <= before]
+        return max(older, key=lambda v: v.get("date_published") or "") if older else vs[0]
+    return next((v for v in vs if v.get("version_type") == "release"), vs[0])
 
 
 async def add(sid: str, project: str) -> dict:
@@ -111,11 +124,11 @@ async def add(sid: str, project: str) -> dict:
     async with _client() as c:
         have = await _present(c, s)
 
-        async def one(pid: str, depth: int, needed_by: str) -> None:
+        async def one(pid: str, depth: int, needed_by: str, exact: str | None = None, before: str | None = None) -> None:
             if pid in have or depth > MAX_DEPTH:
                 return
             have.add(pid)
-            v = await _version(c, s, pid)
+            v = await _version(c, s, pid, exact, before)
             pr = await c.get(f"{catalog.MR}/project/{pid}")
             info = pr.json() if pr.status_code == 200 else {}
             title = info.get("title") or pid
@@ -132,12 +145,17 @@ async def add(sid: str, project: str) -> dict:
                     async for chunk in resp.aiter_bytes():
                         out.write(chunk)
             os.replace(path + ".part", path)
-            entry = {"file": os.path.basename(path), "title": title, "project_id": v["project_id"],
+            entry = {"file": os.path.basename(path), "title": title, "project_id": v["project_id"], "version": v.get("version_number"),
                      "slug": info.get("slug") or pid, "for": needed_by if depth else ""}
             added.append(entry)
             for dep in v.get("dependencies") or []:
-                if dep.get("dependency_type") == "required" and dep.get("project_id"):
-                    await one(dep["project_id"], depth + 1, title)
+                if dep.get("dependency_type") == "required" and (dep.get("project_id") or dep.get("version_id")):
+                    pid2 = dep.get("project_id")
+                    if not pid2:                                   # only the version is named
+                        vr = await c.get(f"{catalog.MR}/version/{dep['version_id']}")
+                        pid2 = vr.json().get("project_id") if vr.status_code == 200 else None
+                    if pid2:
+                        await one(pid2, depth + 1, title, dep.get("version_id"), v.get("date_published"))
 
         if project in have:
             pr = await c.get(f"{catalog.MR}/project/{project}")
