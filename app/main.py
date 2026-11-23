@@ -331,6 +331,8 @@ _ACTIONS = [
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/upgrade$", "server.upgrade"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/upgrade/rollback$", "server.upgrade-rollback"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/software$", "server.software"),
+    ("POST", r"^/api/servers/(?P<sid>[^/]+)/player-mods$", "mods.player-add"),
+    ("DELETE", r"^/api/servers/(?P<sid>[^/]+)/player-mods/(?P<d>[^/]+)$", "mods.player-remove"),
     ("POST", r"^/api/servers/(?P<sid>[^/]+)/software/undo$", "server.software-undo"),
     ("PUT", r"^/api/servers/(?P<sid>[^/]+)/markers/(?P<d>[^/]+)$", "map.marker"),
     ("DELETE", r"^/api/servers/(?P<sid>[^/]+)/markers/(?P<d>[^/]+)$", "map.marker"),
@@ -1257,6 +1259,52 @@ def upgrade_dismiss(sid: str):
     s = _get(sid)
     if (s.get("upgrade") or {}).get("step") in ("done", "failed"):
         state.update(sid, upgrade=None)
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ mods for players only (app/playermods.py)
+@app.get("/api/servers/{sid}/player-mods", dependencies=viewer)
+def player_mods_list(sid: str):
+    from . import playermods
+    return {"mods": playermods.listing(_get(sid))}
+
+
+@app.get("/api/servers/{sid}/player-mods/search", dependencies=moderator)
+async def player_mods_search(sid: str, q: str = ""):
+    from . import playermods
+    try:
+        return await playermods.search(_get(sid), q)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Couldn't reach Modrinth: {e}")
+
+
+class PlayerModReq(BaseModel):
+    project: str
+
+
+@app.post("/api/servers/{sid}/player-mods", dependencies=moderator)
+async def player_mods_add(sid: str, body: PlayerModReq, request: Request):
+    from . import playermods
+    _get(sid)
+    try:
+        r = await playermods.add(sid, body.project)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Couldn't download from Modrinth: {e}")
+    request.state.detail = ", ".join(a["title"] for a in r["added"]) or body.project
+    return r
+
+
+@app.delete("/api/servers/{sid}/player-mods/{file}", dependencies=moderator)
+def player_mods_remove(sid: str, file: str, request: Request):
+    from . import playermods
+    _get(sid)
+    request.state.detail = file
+    try:
+        playermods.remove(sid, file)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
     return {"ok": True}
 
 

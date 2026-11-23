@@ -169,19 +169,21 @@ def files(s: dict) -> tuple[dict[str, str], list[str]]:
     """{path in the pack: file on disk} and the paths left out (with why). Servers that run
     a CurseForge, FTB or Modrinth pack hand out that pack's client version (with its
     theming and client mods) plus mods added through the Mods tab; others the server's files."""
-    from . import clientpack
+    from . import clientpack, playermods
     if clientpack.key(s):
         st = clientpack.status(s)
         if st["state"] != "ready":
             raise Preparing(st)
         fl = {rel: clientpack.file_path(s, rel) for rel in clientpack.manifest(s)}
         fl.update(clientpack.extras(s))
+        fl.update(playermods.files(s))                       # mods for players only (Voxy, say)
         return fl, [f"{m} (couldn't be downloaded)" for m in st.get("missing", [])]
     return server_files(s)
 
 
 def server_files(s: dict) -> tuple[dict[str, str], list[str]]:
     """The server's own files, for custom and imported servers."""
+    from . import playermods
     base = dockerctl.server_dir(s["id"])
     out: dict[str, str] = {}
     left: list[str] = []
@@ -220,6 +222,7 @@ def server_files(s: dict) -> tuple[dict[str, str], list[str]]:
                     left.append(f"{rel} (looks like it holds a password or token)")
                 else:
                     out[rel] = p
+    out.update(playermods.files(s))                          # mods for players only (Voxy, say)
     return out, left
 
 

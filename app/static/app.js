@@ -888,8 +888,10 @@ async function tabMods(sid, s) {
     <div class="list" id="mres"></div>` : ""}
     ${(s.auto_disabled || []).length ? `<div class="banner">SpawnPoint turned off ${s.auto_disabled.length} client-only mod(s) that crash servers: ${esc(s.auto_disabled.map((m) => m.name).join(", "))}. Players can still use them in their own game.</div>` : ""}
     <div id="mupd"></div>
-    <h4 style="margin:4px 0 0">Installed</h4><div class="list" id="mlist"></div>`;
+    <h4 style="margin:4px 0 0">Installed</h4><div class="list" id="mlist"></div>
+    ${["fabric", "quilt", "forge", "neoforge"].includes(s.loader) ? `<div class="card" id="pmods" style="margin-top:6px"></div>` : ""}`;
   drawModUpdates(sid, mod);
+  drawPlayerMods(sid, s, mod);
   const drawInstalled = async () => {
     const m = await api(`/servers/${sid}/mods`);
     const extra = (m.managed || []).length ? `<div class="sub">Added on top of the modpack, kept across restarts and pack updates:</div>` +
@@ -929,6 +931,41 @@ async function tabMods(sid, s) {
   };
   $("#mgo").onclick = search; $("#mq").onkeydown = (e) => { if (e.key === "Enter") search(); };
   search();
+}
+
+// Mods for players only (app/playermods.py): in the player pack, never loaded by the server.
+async function drawPlayerMods(sid, s, mod) {
+  const box = $("#pmods"); if (!box) return;
+  const r = await api(`/servers/${sid}/player-mods`).catch(() => null); if (!r || !$("#pmods")) return;
+  box.innerHTML = `<h4 style="margin-top:0">For players only</h4>
+    <p class="sub" style="margin-top:0">Mods that only run in players' games, like Voxy for a server with LOD Server Support. They go in the player pack, and the server never loads them. Mods they need come along.</p>
+    <div class="list" id="pmlist">${r.mods.map((m) => `<div class="item"><div class="grow"><div class="t">${esc(m.title)}</div>
+      <div class="d mono">${esc(m.file)}${m.for ? ` · needed by ${esc(m.for)}` : ""}</div></div>
+      ${mod ? `<button class="danger small" data-pmr="${esc(m.file)}" data-pmt="${esc(m.title)}">Remove</button>` : ""}</div>`).join("") || `<div class="sub">None yet.</div>`}</div>
+    ${mod ? `<div class="row" style="margin-top:10px"><label for="pmq" class="sr">Search mods for players</label><input id="pmq" placeholder="Search mods for players, like Voxy" style="flex:1"><button id="pmgo">Search</button></div>
+      <div class="list" id="pmres"></div>` : ""}`;
+  $$("[data-pmr]", box).forEach((b) => (b.onclick = async () => {
+    if (!await fmConfirm(`Remove ${b.dataset.pmt} from the player pack? Players' apps take it out at their next sync.`, "Remove")) return;
+    if (await act(() => api(`/servers/${sid}/player-mods/${encodeURIComponent(b.dataset.pmr)}`, { method: "DELETE" }), "Removed from the player pack")) drawPlayerMods(sid, s, mod);
+  }));
+  if (!mod) return;
+  const search = async () => {
+    const q = $("#pmq").value.trim(); if (!q) return;
+    $("#pmres").innerHTML = `<div class="sub">Searching…</div>`;
+    const res = await act(() => api(`/servers/${sid}/player-mods/search?q=${encodeURIComponent(q)}`));
+    if (!res) return ($("#pmres").innerHTML = "");
+    $("#pmres").innerHTML = res.map((p, i) => `<div class="item">${p.icon ? `<img src="${esc(p.icon)}" loading="lazy" alt="">` : `<img alt="">`}
+      <div class="grow"><div class="t">${esc(p.title)}</div><div class="d">${esc(p.description)}</div></div>
+      <button class="small" data-pi="${i}">Add for players</button></div>`).join("") || `<div class="sub">No matching mods for ${esc(LOADER[s.loader] || s.loader)} ${esc(s.mc_version)}.</div>`;
+    $$("[data-pi]", $("#pmres")).forEach((b) => (b.onclick = async () => {
+      b.disabled = true; b.textContent = "Adding…";
+      const x = await act(() => api(`/servers/${sid}/player-mods`, { method: "POST", body: { project: res[b.dataset.pi].id } }));
+      if (!x) { b.disabled = false; b.textContent = "Add for players"; return; }
+      toast(`Added to the player pack: ${x.added.map((a) => a.title).join(", ") || "already there"}.${x.missing.length ? ` Not available for this version: ${x.missing.join(", ")}.` : ""}`, !!x.missing.length);
+      drawPlayerMods(sid, s, mod);
+    }));
+  };
+  $("#pmgo").onclick = search; $("#pmq").onkeydown = (e) => { if (e.key === "Enter") search(); };
 }
 
 async function drawPlayerHistory(sid) {

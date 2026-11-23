@@ -223,6 +223,10 @@ The page is at `/p/<link>` on the address you enter in the card, which has to be
 
 Mods belong to their authors and many licences don't allow rehosting, so keep the link to your own players. For a public modpack server, point people to the official pack instead.
 
+### Mods for players only
+
+Some server mods have a half that only runs in players' games. For example, LOD Server Support (or Voxy Server Side) on the server needs **Voxy** on every player's computer, and Voxy needs Sodium. Add those in **Mods → For players only**. They go in the player pack (the app, Prism and the zip), and the server never loads them; they're kept in a `player-mods` folder next to `mods`. Mods they require come along, unless the server already has them.
+
 ## How a new server comes up
 
 1. **Installing:** itzg/minecraft-server downloads the loader or modpack (big packs can take 5–15 min). Modded servers and modpacks are only installed here, without starting the game, so a big pack's slow first start happens once instead of twice. Paper and vanilla start once here (it takes seconds), because some of their settings files only appear on a real start.
