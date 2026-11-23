@@ -83,3 +83,30 @@ def test_memory_migration(tmp_path, monkeypatch):
     assert env["MAX_MEMORY"] == "24G" and "-XX:SoftMaxHeapSize=12g" in env["JVM_OPTS"]
     m = servers.refresh_memory_plan(state.get("man"))["memory"]   # manual: keeps 10 as normal
     assert (m["soft_gb"], m["max_gb"], m["auto"]) == (10, 20, False)
+
+
+def test_fabric_26_isnt_recorded_as_its_loader_version(tmp_path, monkeypatch):
+    """26.x Fabric has no intermediary mappings; the version was read from .fabric/server
+    and came out as the loader's (0.20.1), so the next start asked for Minecraft 0.20.1."""
+    from app import importer
+    d = tmp_path / "t"
+    (d / ".fabric" / "server" / "0.20.1-26.3").mkdir(parents=True)
+    (d / "libraries" / "net" / "fabricmc" / "fabric-loader" / "0.20.1").mkdir(parents=True)
+    (d / "versions" / "26.3").mkdir(parents=True)
+    found = importer.detect(str(d))
+    assert found["kind"] == "fabric" and found["loader_version"] == "0.20.1" and found["mc_version"] == "26.3"
+
+    # the launcher's name says it too, even before the game has unpacked itself
+    e = tmp_path / "e"
+    (e / ".fabric").mkdir(parents=True)
+    (e / "fabric-server-mc.26.3-loader.0.20.1-launcher.1.1.1.jar").write_bytes(b"x")
+    assert importer.detect(str(e))["mc_version"] == "26.3"
+    assert not importer.looks_like_mc("0.20.1") and importer.looks_like_mc("26.3") and importer.looks_like_mc("1.21.11")
+
+    # a server already recorded wrongly is put right at the next start
+    monkeypatch.setattr(dockerctl, "server_dir", lambda sid: str(d))
+    monkeypatch.setattr(servers, "pack_mod_ids", lambda s: set())
+    state.put({"id": "t", "name": "t", "kind": "fabric", "loader": "fabric", "mc_version": "0.20.1", "java_tag": "java25",
+               "memory": {"max_gb": 4, "init_gb": 2}})
+    s = asyncio.run(servers.reconcile_install(state.get("t")))
+    assert s["mc_version"] == "26.3"

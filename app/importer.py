@@ -141,6 +141,11 @@ def _jar_version_json(jar: str) -> str:
     return ""
 
 
+def looks_like_mc(v: str) -> bool:
+    """1.x.y, or the year-based versions from 26.1 on. Not a loader version like 0.20.1."""
+    return bool(re.fullmatch(r"1\.\d+(?:\.\d+)?|[2-9]\d\.\d+(?:\.\d+)?", v or ""))
+
+
 def detect(sdir: str) -> dict:
     """Server type and versions from the server's own files."""
     libs = os.path.join(sdir, "libraries")
@@ -172,13 +177,18 @@ def detect(sdir: str) -> dict:
         lv = _dirs(os.path.join(libs, "net", "fabricmc", "fabric-loader"))
         out.update(kind="fabric", loader_version=lv[-1] if lv else "")
     if out["kind"] in ("fabric", "quilt") and not mc:
+        # 26.x has no intermediary mappings any more, so look in several places, and never
+        # take the loader's own version (0.20.1) for Minecraft's.
         inter = _dirs(os.path.join(libs, "net", "fabricmc", "intermediary"))
-        mc = inter[-1] if inter else ""
-        if not mc:
-            for d in _dirs(os.path.join(sdir, ".fabric", "server")):
-                m = re.search(r"(\d+\.\d+(?:\.\d+)?)", d)
-                if m:
-                    mc = m.group(1)
+        cands = list(inter)
+        for j in glob.glob(os.path.join(sdir, "fabric-server-mc.*-loader*.jar")):
+            m = re.search(r"fabric-server-mc\.(.+?)-loader", os.path.basename(j))
+            if m:
+                cands.append(m.group(1))
+        cands += _dirs(os.path.join(sdir, "versions"))          # the game's own bundler unpacks here
+        for d in _dirs(os.path.join(sdir, ".fabric", "server")):
+            cands += re.findall(r"\d+\.\d+(?:\.\d+)?", d)
+        mc = next((c for c in cands if looks_like_mc(c) and c != out["loader_version"]), "")
 
     if not out["kind"]:
         for name, kind in (("purpur", "purpur"), ("paper", "paper")):

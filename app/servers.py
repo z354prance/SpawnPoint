@@ -133,7 +133,7 @@ async def reconcile_install(s: dict) -> dict:
     same_family = {kind, s.get("loader")} <= {"paper", "purpur"}      # Purpur uses Paper's config files
     if kind in ("forge", "neoforge", "fabric", "quilt", "paper", "purpur") and kind != s.get("loader") and not same_family:
         changed["loader"] = kind
-    if mc and mc != s.get("mc_version") and kind:
+    if mc and mc != s.get("mc_version") and kind and importer.looks_like_mc(mc) and mc != found.get("loader_version"):
         changed["mc_version"] = mc
     pack_ids = await asyncio.to_thread(pack_mod_ids, s) if is_managed(s) else set()
     managed = list(s.get("managed_mods", []))
