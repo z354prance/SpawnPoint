@@ -220,3 +220,24 @@ def test_servers_left_with_the_old_mark_are_looked_at_again_once(srv):
     state.update("t", helpers_for="fabric")
     software.recover()
     assert state.get("t")["helpers_for"] == "fabric"                            # only once
+
+
+def test_fabric_api_is_always_there_on_fabric(srv, monkeypatch):
+    """Most Fabric mods (Chunky too) need Fabric API; it was left for people to add by hand."""
+    d, _ = srv
+    (d / "mods").mkdir(exist_ok=True)
+    installed = []
+
+    async def install(s, slug):
+        installed.append(slug)
+        (d / "mods" / f"{slug}-1.0.jar").write_bytes(b"x")
+        return {"filename": f"{slug}-1.0.jar"}
+    monkeypatch.setattr(servers, "install_mod", install)
+    state.update("t", kind="fabric", loader="fabric", helpers_for="fabric")      # helpers done long ago
+    asyncio.run(servers.ensure_helpers(state.get("t")))
+    assert installed == ["fabric-api"]
+    asyncio.run(servers.ensure_helpers(state.get("t")))                         # there now: not again
+    assert installed == ["fabric-api"]
+    state.update("t", kind="paper", loader="paper", helpers_for="paper")
+    installed.clear(); asyncio.run(servers.ensure_helpers(state.get("t")))
+    assert installed == []

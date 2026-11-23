@@ -18,10 +18,12 @@ log = logging.getLogger("spawnpoint.servers")
 _tasks: dict[str, asyncio.Task] = {}
 
 # Helper mods/plugins added to every server if missing (Modrinth slugs).
+# Libraries nearly every mod needs: put back before every start if they're missing.
+REQUIRED = {"fabric": ["fabric-api"]}
 HELPERS = {
     "paper": ["chunky", "spark"],
     "purpur": ["chunky", "spark"],
-    "fabric": ["chunky", "spark", "ferrite-core", "lithium", "modernfix"],
+    "fabric": ["fabric-api", "chunky", "spark", "ferrite-core", "lithium", "modernfix"],
     "quilt": ["chunky", "spark", "ferrite-core", "lithium", "modernfix"],
     "forge": ["chunky", "spark", "ferrite-core", "modernfix"],
     "neoforge": ["chunky", "spark", "ferrite-core", "modernfix"],
@@ -201,13 +203,20 @@ async def ensure_helpers(s: dict) -> None:
     if is_managed(s):
         return await ensure_pack_helpers(s)
     sid, loader = s["id"], s.get("loader") or s.get("kind") or ""
+    for slug in REQUIRED.get(loader, []):
+        if not has_mod(state.get(sid), slug):
+            try:
+                r = await install_mod(state.get(sid), slug)
+                log.info("[%s] added %s, which most %s mods need", sid, r["filename"], loader)
+            except Exception as e:
+                log.info("[%s] couldn't add %s: %s", sid, slug, e)
     if s.get("helpers_for") == loader:
         return
     if "helpers_for" not in s and not s.get("software_prev"):      # never switched: leave its mods as they are
         state.update(sid, helpers_for=loader)
         return
     added = []
-    for slug in HELPERS.get(loader, []):
+    for slug in [x for x in HELPERS.get(loader, []) if x not in REQUIRED.get(loader, [])]:
         if has_mod(state.get(sid), slug):
             continue
         try:
