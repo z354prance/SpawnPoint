@@ -267,3 +267,14 @@ def test_catalog_prefers_stable(monkeypatch):
     real = httpx.AsyncClient
     monkeypatch.setattr(catalog.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
     assert asyncio.run(catalog.find_version("a", "neoforge", "1.21.1"))["version"] == "4.0.7"
+
+
+def test_loader_version_from_libraries(tmp_path, monkeypatch):
+    """Modpacks don't tell SpawnPoint the loader version: it's read from the libraries,
+    never the Minecraft version (Prism can't find "NeoForge 1.21.1")."""
+    base, _ = _server(tmp_path, monkeypatch, loader_version="")
+    (base / "libraries" / "net" / "neoforged" / "neoforge" / "21.1.209").mkdir(parents=True)
+    (base / "libraries" / "net" / "minecraft" / "server" / "1.21.1-20240808.144430").mkdir(parents=True)
+    assert playerpack.loader_info(state.get("a")) == ("neoforge", "21.1.209")
+    state.update("a", loader_version="1.21.1")                  # the wrong value an earlier version could store
+    assert playerpack.loader_info(state.get("a")) == ("neoforge", "21.1.209")

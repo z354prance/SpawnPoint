@@ -169,13 +169,16 @@ def _auto_disabled(s: dict) -> set[str]:
 
 
 def loader_info(s: dict) -> tuple[str, str]:
+    """The loader and its exact version (like neoforge 21.1.200), read from the server's
+    libraries when SpawnPoint wasn't told it (modpacks bring their own)."""
     loader, ver = (s.get("loader") or "").lower(), s.get("loader_version") or ""
-    if not ver:
+    if not ver or ver == s.get("mc_version"):
         try:
-            l2, v2 = servers.detect_loader_version(dockerctl.server_dir(s["id"]))
-            loader, ver = (l2 or loader), v2
+            from . import importer
+            d = importer.detect(dockerctl.server_dir(s["id"]))
+            loader, ver = (d.get("kind") if d.get("kind") in ("neoforge", "forge", "fabric", "quilt") else loader), d.get("loader_version", "")
         except Exception:
-            pass
+            ver = ""
     return loader, ver
 
 
