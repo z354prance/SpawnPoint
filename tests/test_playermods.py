@@ -93,3 +93,16 @@ def test_a_mod_the_server_already_has(srv):
     state.update("t", managed_mods=[{"slug": "voxygen", "project_id": "voxygen", "filename": "voxygen.jar"}])
     r = asyncio.run(playermods.add("t", "voxygen"))
     assert r["added"] == [] and r["already"] == "Voxygen"
+
+
+def test_listing_shows_what_players_get_from_the_server(srv, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import config, main, users
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "pw")
+    users._fails.clear(); users.ensure_bootstrap()
+    asyncio.run(playermods.add("t", "voxy"))
+    c = TestClient(main.app)
+    c.post("/api/login", json={"username": "admin", "password": "pw"})
+    r = c.get("/api/servers/t/player-mods").json()
+    assert {m["file"] for m in r["mods"]} == {"voxy-0.2.jar", "sodium-0.7.jar"}
+    assert "lss-0.22.jar" in r["from_server"] and "voxy-0.2.jar" not in r["from_server"]

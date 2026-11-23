@@ -1265,8 +1265,15 @@ def upgrade_dismiss(sid: str):
 # ------------------------------------------------------------------ mods for players only (app/playermods.py)
 @app.get("/api/servers/{sid}/player-mods", dependencies=viewer)
 def player_mods_list(sid: str):
-    from . import playermods
-    return {"mods": playermods.listing(_get(sid))}
+    from . import playermods, playerpack
+    s = _get(sid)
+    own = set(playermods.files(s))
+    try:
+        fl, _ = playerpack.files(s)
+        from_server = sorted(k[5:] for k in fl if k.startswith("mods/") and k not in own)
+    except Exception:                                   # an official pack still being prepared
+        from_server = []
+    return {"mods": playermods.listing(s), "from_server": from_server}
 
 
 @app.get("/api/servers/{sid}/player-mods/search", dependencies=moderator)

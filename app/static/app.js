@@ -943,6 +943,9 @@ async function drawPlayerMods(sid, s, mod) {
     <div class="list" id="pmlist">${r.mods.map((m) => `<div class="item"><div class="grow"><div class="t">${esc(m.title)}</div>
       <div class="d mono">${esc(m.file)}${m.for ? ` · needed by ${esc(m.for)}` : ""}</div></div>
       ${mod ? `<button class="danger small" data-pmr="${esc(m.file)}" data-pmt="${esc(m.title)}">Remove</button>` : ""}</div>`).join("") || `<div class="sub">None yet.</div>`}</div>
+    ${(r.from_server || []).length ? `<details style="margin-top:8px"><summary class="sub">Players also get ${r.from_server.length} mod${r.from_server.length === 1 ? "" : "s"} from the server</summary>
+      <div class="sub mono" style="margin-top:6px;overflow-wrap:anywhere">${r.from_server.map(esc).join("<br>")}</div>
+      <p class="sub">Mods the server and players both need come from the server's mods folder, so they don't need adding here.</p></details>` : ""}
     ${mod ? `<div class="row" style="margin-top:10px"><label for="pmq" class="sr">Search mods for players</label><input id="pmq" placeholder="Search mods for players, like Voxy" style="flex:1"><button id="pmgo">Search</button></div>
       <div class="list" id="pmres"></div>` : ""}`;
   $$("[data-pmr]", box).forEach((b) => (b.onclick = async () => {
