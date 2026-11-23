@@ -111,6 +111,18 @@ SpawnPoint sizes itself to the machine it runs on:
 
 One list of trusted players that any server can use. In a server's **Players** tab, **Use the shared invite list** adds everyone on it to that server's whitelist; untick anyone who shouldn't be on that particular server. **Edit shared list** adds and removes people, and can import a server's current whitelist in one go. Servers keep their own whitelist entries: the shared list only ever adds, and later removes, the names it put there. Running servers change straight away; stopped ones get the change in their `whitelist.json` (UUIDs from Mojang, or worked out from the name on offline-mode servers). It only keeps people out when **Invite only** is on for that server.
 
+## Files
+
+The **Files** tab is a file manager for the server's folder (moderators and up):
+
+- Browse by clicking folders or the path at the top; sort by name, size or date; search every file on the server by name.
+- Upload by dragging files or whole folders onto the list, or with **Upload files** / **Upload a folder**. Big uploads stream straight to disk with a progress bar. If a file is already there, you're asked once whether to replace them all.
+- Select with the checkboxes, Shift/Ctrl-click, or Ctrl+A, then **Download** (folders and several items come down as one zip), **Rename**, **Move**, **Copy**, **Zip**, **Extract** (zip, jar, mrpack, tar) or **Delete**. Right-click a row for the same menu. Keys: Delete, F2 to rename, Enter to open, Backspace for the folder above, Esc to clear.
+- Text files open in an editor with line numbers and Ctrl+S. If the server changed the file while you had it open, you're asked before your save replaces it. Images open in a preview.
+- Deleting (and replacing on upload) moves things to **Recently deleted** for 7 days, where you can put them back. Admins can delete from there for good.
+
+Every change is in the activity log. Nothing can reach outside the server's folder.
+
 ## Users and the activity log
 
 Everyone signs in with their own username and password. Roles apply to every server:

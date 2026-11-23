@@ -1270,24 +1270,436 @@ async function tabSettings(sid, s) {
   });
 }
 
-async function tabFiles(sid, s, path = "") {
-  if (!path && FILES_AT) { path = FILES_AT; FILES_AT = null; }
-  const r = await act(() => api(`/servers/${sid}/files?path=${encodeURIComponent(path)}`)); if (!r) return;
-  const up = path.split("/").slice(0, -1).join("/");
-  $("#tab").classList.toggle("fill", !r.entries);
-  if (r.entries) {
-    $("#tab").innerHTML = `<div class="mono sub">/${esc(path)}</div><div class="list">
-      ${path ? `<div class="item click" data-p="${esc(up)}" tabindex="0"><div class="grow">..</div></div>` : ""}
-      ${r.entries.map((e) => `<div class="item click" data-p="${esc((path ? path + "/" : "") + e.name)}" tabindex="0"><div class="grow" style="overflow-wrap:anywhere">${e.dir ? "📁 " : ""}${esc(e.name)}</div>
-        <div class="sub">${e.size != null ? (e.size / 1024).toFixed(1) + " KB" : ""}</div></div>`).join("")}</div>`;
-    $$("[data-p]", $("#tab")).forEach((el) => (el.onclick = el.onkeydown = (e) => { if (e.type === "keydown" && e.key !== "Enter") return; tabFiles(sid, s, el.dataset.p); }));
-  } else {
-    $("#tab").innerHTML = `<div class="row"><span class="mono sub" style="flex:1;overflow-wrap:anywhere">/${esc(path)}</span><button class="small" id="back">Back</button><button class="primary small" id="save">Save</button></div>
-      <textarea id="ed" spellcheck="false" aria-label="File contents" style="flex:1;min-height:300px;font:12px/1.5 var(--mono)">${esc(r.content)}</textarea>`;
-    $("#back").onclick = () => tabFiles(sid, s, up);
-    $("#save").onclick = () => act(() => api(`/servers/${sid}/files`, { method: "PUT", body: { path, content: $("#ed").value } }), "Saved");
+// ---------------------------------------------------------------- Files: a file manager for the server's folder
+// Everything goes through /api/servers/<id>/files/… (app/files.py), which keeps paths inside
+// the server's folder. Deleting moves things to Recently deleted for 7 days.
+const FM = { sid: null, path: "", entries: [], sel: new Set(), last: null, sort: ["name", 1], results: null, q: "",
+  ups: [], upActive: false, editing: null };
+const FM_ARCH = /\.(zip|jar|mrpack|tar|tar\.gz|tgz|tar\.xz|tar\.bz2)$/i, FM_IMG = /\.(png|jpe?g|gif|webp|bmp)$/i;
+const FM_ICON = {
+  dir: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2h8.8A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>',
+  arch: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M10 6h2M10 9h2M10 12h2M10 15h2v3h-2z"/></svg>',
+  img: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="9" cy="9" r="1.6"/><path d="M20 16l-5-5-8 9"/></svg>',
+};
+const fmJoin = (a, b) => (a ? a + "/" + b : b);
+const fmParent = (p) => p.split("/").slice(0, -1).join("/");
+const fmName = (p) => p.split("/").pop();
+const fmApi = (path, opts) => api(`/servers/${FM.sid}/files${path}`, opts);
+const fmWhen = (t) => { if (!t) return ""; const d = new Date(t * 1000), now = new Date();
+  return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : d.toLocaleDateString([], { month: "short", day: "numeric", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" }); };
+const fmIcon = (e) => e.dir ? FM_ICON.dir : FM_IMG.test(e.name) ? FM_ICON.img : FM_ARCH.test(e.name) ? FM_ICON.arch : FM_ICON.file;
+
+async function tabFiles(sid, s, path) {
+  if (FM.sid !== sid) Object.assign(FM, { sid, path: "", sel: new Set(), results: null, q: "", editing: null });
+  if (FILES_AT) { path = FILES_AT; FILES_AT = null; }            // "Open the crash report" from the console
+  if (path !== undefined) {
+    const r = await act(() => api(`/servers/${sid}/files?path=${encodeURIComponent(path)}`)); if (!r) return;
+    if (r.content !== undefined) { FM.path = fmParent(path); return fmEdit(path, r); }
+    FM.path = r.path || "";
+  }
+  FM.editing = null;
+  $("#tab").classList.remove("fill");
+  $("#tab").innerHTML = `<div class="fm" id="fm" tabindex="-1">
+    <div class="fm-top"><nav class="fm-crumbs" id="fmcrumbs" aria-label="Folder"></nav>
+      <form id="fmsearch" class="fm-search" role="search"><input id="fmq" type="search" placeholder="Search all files" aria-label="Search files" value="${esc(FM.q)}"></form></div>
+    <div class="fm-bar" id="fmbar"></div>
+    ${s.phase === "online" ? `<p class="sub fm-note">The server is running: it can write over world files while you change them, and config changes apply after a restart.</p>` : ""}
+    <div class="fm-list" id="fmlist" role="grid" aria-label="Files"></div>
+    <div class="fm-drop" id="fmdrop" hidden><div>Drop to upload to <b id="fmdropto"></b></div></div>
+    <div class="fm-ups" id="fmups" hidden></div>
+    <input type="file" id="fmfile" multiple hidden><input type="file" id="fmdir" webkitdirectory multiple hidden>
+  </div>`;
+  fmWire();
+  await fmLoad(FM.path);
+  fmDrawUps();
+}
+
+async function fmLoad(path, keepSel = false) {
+  const r = await act(() => fmApi(`?path=${encodeURIComponent(path)}`));
+  if (!r) { if (path) return fmLoad(fmParent(path)); return; }
+  if (r.content !== undefined) return fmEdit(path, r);
+  FM.path = r.path || ""; FM.entries = r.entries; FM.results = null;
+  if (!keepSel) FM.sel = new Set();
+  else FM.sel = new Set([...FM.sel].filter((p) => FM.entries.some((e) => fmJoin(FM.path, e.name) === p)));
+  fmDraw();
+}
+
+function fmRows() {
+  if (FM.results) return FM.results.map((e) => ({ ...e, p: e.path }));
+  const [k, dir] = FM.sort;
+  return FM.entries.map((e) => ({ ...e, p: fmJoin(FM.path, e.name) })).sort((a, b) =>
+    (b.dir - a.dir) || dir * (k === "name" ? a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+      : k === "size" ? (a.size ?? -1) - (b.size ?? -1) : (a.mtime || 0) - (b.mtime || 0)));
+}
+
+function fmDraw() {
+  if (!$("#fmlist")) return;
+  const parts = FM.path && !FM.results ? FM.path.split("/") : [];
+  $("#fmcrumbs").innerHTML = `<button class="fm-crumb" data-go="">${esc(LIST.find((x) => x.id === FM.sid)?.name || "server")}</button>`
+    + parts.map((p, i) => `<span aria-hidden="true">/</span><button class="fm-crumb" data-go="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("")
+    + (FM.results ? `<span aria-hidden="true">/</span><span class="fm-crumb on">Search: ${esc(FM.q)}</span>` : "");
+  $$("[data-go]", $("#fmcrumbs")).forEach((b) => (b.onclick = () => { FM.q = ""; $("#fmq").value = ""; fmLoad(b.dataset.go); }));
+  fmDrawBar();
+  const rows = fmRows(), [k, dir] = FM.sort, arrow = (x) => k === x ? (dir > 0 ? " ↑" : " ↓") : "";
+  const all = rows.length && rows.every((r) => FM.sel.has(r.p));
+  $("#fmlist").innerHTML = `<div class="fm-row fm-head" role="row">
+      <span role="columnheader"><input type="checkbox" id="fmall" aria-label="Select all" ${all ? "checked" : ""}></span>
+      <button role="columnheader" data-sort="name">Name${arrow("name")}</button>
+      <button role="columnheader" data-sort="size" class="fm-num">Size${arrow("size")}</button>
+      <button role="columnheader" data-sort="mtime" class="fm-when">Modified${arrow("mtime")}</button></div>
+    ${!FM.results && FM.path ? `<div class="fm-row fm-up" role="row" data-up="1" tabindex="0"><span></span><span class="fm-name">${FM_ICON.dir}<span>..</span></span><span></span><span class="fm-when"></span></div>` : ""}
+    ${rows.map((r, i) => `<div class="fm-row${FM.sel.has(r.p) ? " sel" : ""}" role="row" tabindex="0" data-i="${i}" aria-selected="${FM.sel.has(r.p)}">
+      <span><input type="checkbox" aria-label="Select ${esc(r.name)}" ${FM.sel.has(r.p) ? "checked" : ""}></span>
+      <span class="fm-name ${r.dir ? "dir" : ""}">${fmIcon(r)}<a href="#" data-open="${i}" title="${esc(r.p)}">${esc(FM.results ? r.p : r.name)}</a></span>
+      <span class="fm-num">${r.dir ? "" : fmtB(r.size)}</span><span class="fm-when">${fmWhen(r.mtime)}</span></div>`).join("")
+    || `<div class="fm-empty">${FM.results ? `Nothing matches “${esc(FM.q)}”${FM.more ? "" : ""}.` : "This folder is empty. Drop files here to upload them."}</div>`}
+    ${FM.results && FM.more ? `<p class="sub" style="padding:8px 10px">Showing the first ${rows.length}. Search for something more specific to narrow it down.</p>` : ""}`;
+  const list = $("#fmlist");
+  $("#fmall").onchange = (e) => { FM.sel = e.target.checked ? new Set(rows.map((r) => r.p)) : new Set(); fmDraw(); };
+  $$("[data-sort]", list).forEach((b) => (b.onclick = () => { FM.sort = [b.dataset.sort, FM.sort[0] === b.dataset.sort ? -FM.sort[1] : 1]; fmDraw(); }));
+  const up = $("[data-up]", list);
+  if (up) up.onclick = up.ondblclick = () => fmLoad(fmParent(FM.path));
+  $$(".fm-row[data-i]", list).forEach((el) => {
+    const r = rows[+el.dataset.i];
+    el.onclick = (e) => {
+      if (e.target.closest("a")) return;
+      if (e.target.type === "checkbox") { FM.sel.has(r.p) ? FM.sel.delete(r.p) : FM.sel.add(r.p); FM.last = +el.dataset.i; return fmDraw(); }
+      if (e.shiftKey && FM.last != null) {
+        const [a, b] = [Math.min(FM.last, +el.dataset.i), Math.max(FM.last, +el.dataset.i)];
+        rows.slice(a, b + 1).forEach((x) => FM.sel.add(x.p));
+      } else if (e.ctrlKey || e.metaKey) { FM.sel.has(r.p) ? FM.sel.delete(r.p) : FM.sel.add(r.p); FM.last = +el.dataset.i; }
+      else { FM.sel = new Set([r.p]); FM.last = +el.dataset.i; }
+      fmDraw(); $(`.fm-row[data-i="${el.dataset.i}"]`)?.focus();
+    };
+    el.ondblclick = (e) => { if (e.target.type !== "checkbox") fmOpen(r); };
+    el.oncontextmenu = (e) => { e.preventDefault(); if (!FM.sel.has(r.p)) { FM.sel = new Set([r.p]); fmDraw(); } fmMenu(e.clientX, e.clientY); };
+  });
+  $$("[data-open]", list).forEach((a) => (a.onclick = (e) => { e.preventDefault(); fmOpen(rows[+a.dataset.open]); }));
+}
+
+function fmSelected() { const rows = fmRows(); return rows.filter((r) => FM.sel.has(r.p)); }
+
+function fmDrawBar() {
+  const sel = fmSelected(), n = sel.length, one = n === 1 ? sel[0] : null;
+  $("#fmbar").innerHTML = n ? `<span class="fm-count">${n} selected</span>
+      <button class="small" data-a="download">Download</button>
+      ${one ? `<button class="small" data-a="rename">Rename</button>` : ""}
+      <button class="small" data-a="move">Move</button><button class="small" data-a="copy">Copy</button>
+      <button class="small" data-a="compress">Zip</button>
+      ${one && !one.dir && FM_ARCH.test(one.name) ? `<button class="small" data-a="extract">Extract</button>` : ""}
+      <button class="small danger" data-a="delete">Delete</button>
+      <button class="small ghost" data-a="clear" aria-label="Clear selection" title="Clear selection (Esc)">✕</button>`
+    : `<button class="small" data-a="upload">${ICON.plus}Upload files</button><button class="small" data-a="uploaddir">Upload a folder</button>
+      <button class="small" data-a="mkdir">New folder</button><button class="small" data-a="mkfile">New file</button>
+      <span class="grow"></span><button class="small ghost" data-a="trash">Recently deleted</button>`;
+  $$("[data-a]", $("#fmbar")).forEach((b) => (b.onclick = () => fmAction(b.dataset.a)));
+}
+
+async function fmAction(a) {
+  const sel = fmSelected(), paths = sel.map((r) => r.p);
+  if (a === "clear") { FM.sel = new Set(); return fmDraw(); }
+  if (a === "upload") return $("#fmfile").click();
+  if (a === "uploaddir") return $("#fmdir").click();
+  if (a === "trash") return fmTrash();
+  if (a === "download") return fmDownload(paths);
+  if (a === "mkdir" || a === "mkfile") {
+    const name = await fmAsk(a === "mkdir" ? "New folder" : "New file", "Name", a === "mkdir" ? "" : "notes.txt"); if (!name) return;
+    const p = fmJoin(FM.path, name);
+    const r = await act(() => a === "mkdir" ? fmApi("/mkdir", { method: "POST", body: { path: p } })
+      : fmApi("", { method: "PUT", body: { path: p, content: "", create: true } }));
+    if (!r) return;
+    if (a === "mkfile") return fmEdit(p, await fmApi(`/text?path=${encodeURIComponent(p)}`));
+    FM.sel = new Set([p]); return fmLoad(FM.path, true);
+  }
+  if (a === "rename") {
+    const name = await fmAsk("Rename", "New name", sel[0].name); if (!name || name === sel[0].name) return;
+    const r = await act(() => fmApi("/rename", { method: "POST", body: { path: paths[0], name } }));
+    if (r) { FM.sel = new Set([r.path]); fmReload(true); }
+    return;
+  }
+  if (a === "move" || a === "copy") {
+    const to = await fmPickFolder(a === "move" ? `Move ${paths.length} item${paths.length > 1 ? "s" : ""} to…` : `Copy ${paths.length} item${paths.length > 1 ? "s" : ""} to…`, a === "move" ? "Move here" : "Copy here");
+    if (to == null) return;
+    let r = await fmApi("/move", { method: "POST", body: { paths, to, mode: a } }).catch((e) => e);
+    if (r instanceof Error && /already/.test(r.message)) {
+      if (!await fmConfirm(`${r.message}. Replace what's there? The replaced items go to Recently deleted.`, "Replace")) return;
+      r = await fmApi("/move", { method: "POST", body: { paths, to, mode: a, overwrite: true } }).catch((e) => e);
+    }
+    if (r instanceof Error) return toast(r.message, true);
+    toast(a === "move" ? `Moved to /${to}` : `Copied to /${to}`); return fmReload();
+  }
+  if (a === "compress") {
+    const name = await fmAsk("Zip", "Name of the zip", (sel.length === 1 ? sel[0].name.replace(/\.[^.]+$/, "") : "files") + ".zip"); if (!name) return;
+    toast("Zipping…");
+    const r = await act(() => fmApi("/compress", { method: "POST", body: { paths, name } }));
+    if (r) { toast(`Made ${fmName(r.path)} (${fmtB(r.size)})`); FM.sel = new Set([r.path]); fmReload(true); }
+    return;
+  }
+  if (a === "extract") {
+    toast("Extracting…");
+    const r = await act(() => fmApi("/extract", { method: "POST", body: { path: paths[0] } }));
+    if (r) { toast(`Extracted ${r.files} file${r.files === 1 ? "" : "s"} to ${fmName(r.path)}`); FM.sel = new Set([r.path]); fmReload(true); }
+    return;
+  }
+  if (a === "delete") {
+    const what = paths.length === 1 ? `“${sel[0].name}”` : `${paths.length} items`;
+    if (!await fmConfirm(`Delete ${what}? ${sel.some((r) => r.dir) ? "Folders go with everything in them. " : ""}You can put ${paths.length === 1 ? "it" : "them"} back from Recently deleted for 7 days.`, "Delete")) return;
+    const r = await act(() => fmApi("/delete", { method: "POST", body: { paths } }));
+    if (r) { toast(`Deleted ${what}. Recently deleted has ${paths.length === 1 ? "it" : "them"} for 7 days.`); FM.sel = new Set(); fmReload(); }
   }
 }
+
+function fmReload(keepSel = false) { return FM.results ? fmSearch(FM.q) : fmLoad(FM.path, keepSel); }
+
+function fmOpen(r) {
+  if (r.dir) { FM.q = ""; if ($("#fmq")) $("#fmq").value = ""; return fmLoad(r.p); }
+  if (FM_IMG.test(r.name)) {
+    modal(`<h2 style="overflow-wrap:anywhere">${esc(r.name)}</h2><div class="fm-preview"><img src="/api/servers/${esc(FM.sid)}/files/download?inline=true&path=${encodeURIComponent(r.p)}" alt=""></div>
+      <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="small" id="fmpdl">Download</button><button class="small" onclick="closeModal()">Close</button></div>`);
+    $("#fmpdl").onclick = () => fmDownload([r.p]); return;
+  }
+  if (FM_ARCH.test(r.name)) {
+    modal(`<h2 style="overflow-wrap:anywhere">${esc(r.name)}</h2><p class="muted">${fmtB(r.size)} archive.</p>
+      <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="small" onclick="closeModal()">Cancel</button><button class="small" id="fmadl">Download</button><button class="primary small" id="fmaex">Extract here</button></div>`);
+    $("#fmadl").onclick = () => { closeModal(); fmDownload([r.p]); };
+    $("#fmaex").onclick = () => { closeModal(); FM.sel = new Set([r.p]); fmAction("extract"); }; return;
+  }
+  fmApi(`/text?path=${encodeURIComponent(r.p)}`).then((t) => fmEdit(r.p, t)).catch((e) => {
+    modal(`<h2 style="overflow-wrap:anywhere">${esc(r.name)}</h2><p class="muted">${esc(e.message)}</p>
+      <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="small" onclick="closeModal()">Close</button><button class="primary small" id="fmodl">Download</button></div>`);
+    $("#fmodl").onclick = () => { closeModal(); fmDownload([r.p]); };
+  });
+}
+
+function fmDownload(paths) {
+  if (!paths.length) return;
+  const a = document.createElement("a");
+  a.href = `/api/servers/${encodeURIComponent(FM.sid)}/files/download?` + paths.map((p) => "path=" + encodeURIComponent(p)).join("&");
+  a.download = ""; document.body.append(a); a.click(); a.remove();
+  if (paths.length > 1 || fmRows().find((r) => r.p === paths[0])?.dir) toast("Zipping as it downloads. Big folders take a while to start.");
+}
+
+async function fmSearch(q) {
+  FM.q = q.trim();
+  if (!FM.q) return fmLoad(FM.path);
+  const r = await act(() => fmApi(`/search?q=${encodeURIComponent(FM.q)}&path=`)); if (!r) return;
+  FM.results = r.results; FM.more = r.more; FM.sel = new Set(); fmDraw();
+}
+
+// small dialogs (in the page's own modal)
+function fmAsk(title, label, value = "") {
+  return new Promise((done) => {
+    modal(`<h2>${esc(title)}</h2><form id="fmaskf"><label for="fmask">${esc(label)}</label><input id="fmask" value="${esc(value)}" autocomplete="off" spellcheck="false">
+      <div class="row" style="justify-content:flex-end;margin-top:14px"><button type="button" class="small" id="fmaskc">Cancel</button><button class="primary small">OK</button></div></form>`);
+    const i = $("#fmask"); i.focus(); const dot = value.lastIndexOf("."); i.setSelectionRange(0, dot > 0 ? dot : value.length);
+    $("#fmaskf").onsubmit = (e) => { e.preventDefault(); const v = i.value.trim(); closeModal(); done(v || null); };
+    $("#fmaskc").onclick = () => { closeModal(); done(null); };
+  });
+}
+function fmConfirm(text, yes) {
+  return new Promise((done) => {
+    modal(`<p style="margin-top:0">${esc(text)}</p><div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button class="small" id="fmcn">Cancel</button><button class="small ${yes === "Delete" || yes === "Replace" ? "danger" : "primary"}" id="fmcy">${esc(yes)}</button></div>`);
+    $("#fmcy").focus();
+    $("#fmcy").onclick = () => { closeModal(); done(true); };
+    $("#fmcn").onclick = () => { closeModal(); done(false); };
+  });
+}
+async function fmPickFolder(title, yes) {
+  let at = FM.path;
+  return new Promise((done) => {
+    const draw = async () => {
+      const r = await fmApi(`?path=${encodeURIComponent(at)}`).catch(() => null); if (!r) return;
+      const dirs = r.entries.filter((e) => e.dir);
+      modal(`<h2>${esc(title)}</h2><div class="mono sub" style="margin-bottom:8px">/${esc(at)}</div>
+        <div class="fm-pick">${at ? `<button class="fm-prow" data-to="${esc(fmParent(at))}">${FM_ICON.dir}..</button>` : ""}
+        ${dirs.map((d) => `<button class="fm-prow" data-to="${esc(fmJoin(at, d.name))}">${FM_ICON.dir}${esc(d.name)}</button>`).join("") || `<p class="sub" style="padding:8px">No folders here.</p>`}</div>
+        <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="small" id="fmpc">Cancel</button><button class="primary small" id="fmpy">${esc(yes)}</button></div>`);
+      $$("[data-to]").forEach((b) => (b.onclick = () => { at = b.dataset.to; draw(); }));
+      $("#fmpy").onclick = () => { closeModal(); done(at); };
+      $("#fmpc").onclick = () => { closeModal(); done(null); };
+    };
+    draw();
+  });
+}
+
+function fmMenu(x, y) {
+  $("#fmmenu")?.remove();
+  const sel = fmSelected(), one = sel.length === 1 ? sel[0] : null;
+  const items = [one && ["open", one.dir ? "Open" : "Open"], ["download", "Download"], one && ["rename", "Rename"], ["move", "Move…"], ["copy", "Copy…"],
+    ["compress", "Zip…"], one && !one.dir && FM_ARCH.test(one.name) && ["extract", "Extract here"], ["delete", "Delete"]].filter(Boolean);
+  const m = document.createElement("div");
+  m.id = "fmmenu"; m.className = "fm-menu"; m.setAttribute("role", "menu");
+  m.innerHTML = items.map(([k, l]) => `<button role="menuitem" data-m="${k}" class="${k === "delete" ? "bad" : ""}">${l}</button>`).join("");
+  document.body.append(m);
+  m.style.left = Math.min(x, innerWidth - m.offsetWidth - 8) + "px"; m.style.top = Math.min(y, innerHeight - m.offsetHeight - 8) + "px";
+  $$("[data-m]", m).forEach((b) => (b.onclick = () => { m.remove(); b.dataset.m === "open" ? fmOpen(one) : fmAction(b.dataset.m); }));
+  m.querySelector("button")?.focus();
+  setTimeout(() => document.addEventListener("click", () => m.remove(), { once: true }));
+}
+
+async function fmTrash() {
+  const r = await act(() => fmApi("/trash")); if (!r) return;
+  const pick = new Set();
+  const draw = () => {
+    modal(`<h2>Recently deleted</h2><p class="muted" style="margin-top:0">Deleted files and folders stay here for ${r.days} days, then they're gone for good.</p>
+      <div class="fm-pick">${r.items.map((it) => `<label class="fm-trow"><input type="checkbox" data-id="${esc(it.id)}" ${pick.has(it.id) ? "checked" : ""}>
+        <span class="fm-name">${it.dir ? FM_ICON.dir : FM_ICON.file}<span style="overflow-wrap:anywhere">/${esc(it.path)}</span></span>
+        <span class="sub">${fmtB(it.size)} · ${ago(it.at)}</span></label>`).join("") || `<p class="sub" style="padding:8px">Nothing deleted lately.</p>`}</div>
+      <div class="row" style="justify-content:space-between;margin-top:14px">
+        ${can("admin") && r.items.length ? `<button class="small danger" id="fmtgone" ${pick.size ? "" : "disabled"}>Delete for good</button>` : "<span></span>"}
+        <span class="row"><button class="small" onclick="closeModal()">Close</button><button class="primary small" id="fmtback" ${pick.size ? "" : "disabled"}>Put back</button></span></div>`);
+    $$("[data-id]").forEach((c) => (c.onchange = () => { c.checked ? pick.add(c.dataset.id) : pick.delete(c.dataset.id); draw(); }));
+    $("#fmtback").onclick = async () => {
+      const x = await act(() => fmApi("/trash/restore", { method: "POST", body: { ids: [...pick] } })); if (!x) return;
+      closeModal(); toast(`Put back ${x.restored.length} item${x.restored.length === 1 ? "" : "s"}`); fmReload();
+    };
+    $("#fmtgone") && ($("#fmtgone").onclick = async () => {
+      if (!await fmConfirm(`Delete ${pick.size} item${pick.size === 1 ? "" : "s"} for good? This can't be undone.`, "Delete")) return fmTrash();
+      await act(() => fmApi("/trash/empty", { method: "POST", body: { ids: [...pick] } })); fmTrash();
+    });
+  };
+  draw();
+}
+
+// ---- uploads: one request per file, streamed; folders keep their structure
+function fmQueue(list) {
+  if (!list.length) return;
+  const to = FM.path;
+  FM.ups.push(...list.map(({ file, rel }) => ({ file, path: fmJoin(to, rel || file.name), done: 0, state: "waiting" })));
+  fmDrawUps(); fmPump();
+}
+async function fmPump() {
+  if (FM.upActive) return;
+  FM.upActive = true;
+  while (true) {
+    const u = FM.ups.find((x) => x.state === "waiting"); if (!u) break;
+    u.state = "sending"; fmDrawUps();
+    const res = await new Promise((done) => {
+      const x = new XMLHttpRequest();
+      x.open("PUT", `/api/servers/${encodeURIComponent(FM.sid)}/files/upload?path=${encodeURIComponent(u.path)}${u.overwrite ? "&overwrite=true" : ""}`);
+      x.upload.onprogress = (e) => { u.done = e.loaded; fmDrawUps(); };
+      x.onload = () => done({ ok: x.status < 300, status: x.status, msg: (() => { try { return JSON.parse(x.responseText).detail; } catch { return x.statusText; } })() });
+      x.onerror = () => done({ ok: false, status: 0, msg: "Connection lost" });
+      x.send(u.file);
+    });
+    u.state = res.ok ? "done" : res.status === 409 && /exists/.test(res.msg || "") ? "exists" : "failed"; u.msg = res.msg; u.done = u.file.size;
+    fmDrawUps();
+  }
+  FM.upActive = false;
+  const exists = FM.ups.filter((u) => u.state === "exists");
+  if (exists.length && await fmConfirm(`${exists.length} file${exists.length === 1 ? " is" : "s are"} already there (${exists.slice(0, 3).map((u) => fmName(u.path)).join(", ")}${exists.length > 3 ? "…" : ""}). Replace ${exists.length === 1 ? "it" : "them"}? The old ${exists.length === 1 ? "one goes" : "ones go"} to Recently deleted.`, "Replace")) {
+    exists.forEach((u) => Object.assign(u, { state: "waiting", overwrite: true, done: 0 })); return fmPump();
+  }
+  exists.forEach((u) => (u.state = "skipped"));
+  if (FM.sid && $("#fmlist")) fmLoad(FM.path, true);
+  fmDrawUps();
+}
+function fmDrawUps() {
+  const box = $("#fmups"); if (!box) return;
+  const ups = FM.ups; box.hidden = !ups.length; if (!ups.length) return;
+  const total = ups.reduce((a, u) => a + u.file.size, 0), done = ups.reduce((a, u) => a + Math.min(u.done, u.file.size), 0);
+  const busy = ups.some((u) => u.state === "waiting" || u.state === "sending");
+  const failed = ups.filter((u) => u.state === "failed");
+  const now = ups.find((u) => u.state === "sending");
+  box.innerHTML = `<div class="row" style="justify-content:space-between"><b>${busy ? `Uploading ${ups.filter((u) => u.state === "done").length + 1} of ${ups.length}` : `Uploaded ${ups.filter((u) => u.state === "done").length} of ${ups.length}`}</b>
+      ${busy ? "" : `<button class="small ghost" id="fmupx">Close</button>`}</div>
+    <div class="fm-bar2"><i style="width:${total ? (100 * done / total).toFixed(1) : 100}%"></i></div>
+    <div class="sub" style="overflow-wrap:anywhere">${now ? `${esc(now.path)} · ${fmtB(done)} of ${fmtB(total)}` : failed.length ? "" : `${fmtB(total)}`}</div>
+    ${failed.map((u) => `<div class="sub" style="color:var(--bad)">${esc(fmName(u.path))}: ${esc(u.msg || "failed")}</div>`).join("")}`;
+  $("#fmupx") && ($("#fmupx").onclick = () => { FM.ups = []; fmDrawUps(); });
+}
+async function fmEntries(dt) {
+  // files dropped from the desktop, folders included (with their paths)
+  const out = [], walk = async (entry, pre) => {
+    if (entry.isFile) await new Promise((ok) => entry.file((f) => { out.push({ file: f, rel: pre + f.name }); ok(); }, ok));
+    else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch; do { batch = await new Promise((ok) => reader.readEntries(ok, () => ok([]))); for (const e of batch) await walk(e, pre + entry.name + "/"); } while (batch.length);
+    }
+  };
+  const items = [...(dt.items || [])].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+  if (items.length) { for (const e of items) await walk(e, ""); return out; }
+  return [...dt.files].map((f) => ({ file: f, rel: f.name }));
+}
+
+function fmWire() {
+  const fm = $("#fm");
+  $("#fmsearch").onsubmit = (e) => { e.preventDefault(); fmSearch($("#fmq").value); };
+  $("#fmq").oninput = (e) => { if (!e.target.value) fmSearch(""); };
+  $("#fmfile").onchange = (e) => { fmQueue([...e.target.files].map((f) => ({ file: f, rel: f.name }))); e.target.value = ""; };
+  $("#fmdir").onchange = (e) => { fmQueue([...e.target.files].map((f) => ({ file: f, rel: f.webkitRelativePath || f.name }))); e.target.value = ""; };
+  let depth = 0;
+  fm.ondragenter = (e) => { if (![...(e.dataTransfer?.types || [])].includes("Files")) return; e.preventDefault(); depth++; $("#fmdropto").textContent = "/" + FM.path; $("#fmdrop").hidden = false; };
+  fm.ondragover = (e) => { if ([...(e.dataTransfer?.types || [])].includes("Files")) e.preventDefault(); };
+  fm.ondragleave = () => { if (--depth <= 0) { depth = 0; $("#fmdrop").hidden = true; } };
+  fm.ondrop = async (e) => { e.preventDefault(); depth = 0; $("#fmdrop").hidden = true; fmQueue(await fmEntries(e.dataTransfer)); };
+  fm.onkeydown = (e) => {
+    if (e.target.matches("input, textarea")) return;
+    const rows = fmRows(), cur = document.activeElement?.closest?.(".fm-row[data-i]"), i = cur ? +cur.dataset.i : -1;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") { e.preventDefault(); FM.sel = new Set(rows.map((r) => r.p)); fmDraw(); }
+    else if (e.key === "Delete" && FM.sel.size) { e.preventDefault(); fmAction("delete"); }
+    else if (e.key === "F2" && FM.sel.size === 1) { e.preventDefault(); fmAction("rename"); }
+    else if (e.key === "Escape" && FM.sel.size) { FM.sel = new Set(); fmDraw(); }
+    else if (e.key === "Backspace" && FM.path && !FM.results) { e.preventDefault(); fmLoad(fmParent(FM.path)); }
+    else if (e.key === "Enter" && i >= 0) { e.preventDefault(); fmOpen(rows[i]); }
+    else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && rows.length) {
+      e.preventDefault(); const n = Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)));
+      if (!e.shiftKey) FM.sel = new Set([rows[n].p]); else FM.sel.add(rows[n].p);
+      FM.last = n; fmDraw(); $(`.fm-row[data-i="${n}"]`)?.focus();
+    }
+  };
+}
+
+// ---- the editor
+function fmEdit(path, f) {
+  FM.editing = { path, mtime: f.mtime, saved: f.content };
+  $("#tab").classList.add("fill");
+  $("#tab").innerHTML = `<div class="fm-ed">
+    <div class="fm-top"><nav class="fm-crumbs"><button class="fm-crumb" id="fmeback" title="Back to the folder">${esc(fmParent(path) ? "/" + fmParent(path) : LIST.find((x) => x.id === FM.sid)?.name || "server")}</button><span aria-hidden="true">/</span><span class="fm-crumb on">${esc(fmName(path))}</span></nav>
+      <span class="sub" id="fmestate" aria-live="polite"></span></div>
+    <div class="row" style="gap:6px;margin-bottom:8px"><button class="small" id="fmeclose">Close</button><button class="small" id="fmedl">Download</button>
+      <label class="row sub" style="margin:0 0 0 6px;gap:6px"><input type="checkbox" id="fmewrap"> Wrap lines</label><span class="grow"></span>
+      <button class="primary small" id="fmesave">Save</button></div>
+    <div class="fm-code"><pre class="fm-gutter" id="fmeg" aria-hidden="true"></pre><textarea id="fmet" spellcheck="false" aria-label="${esc(fmName(path))}" wrap="off"></textarea></div>
+  </div>`;
+  const t = $("#fmet"), g = $("#fmeg");
+  t.value = f.content;
+  const lines = () => { const n = t.value.split("\n").length; if (g.dataset.n != n) { g.dataset.n = n; g.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n"); } };
+  const dirty = () => t.value !== FM.editing?.saved;
+  const state = () => { $("#fmestate").textContent = dirty() ? "Unsaved changes" : ""; $("#fmesave").disabled = !dirty(); };
+  lines(); state();
+  t.oninput = () => { lines(); state(); };
+  t.onscroll = () => { g.scrollTop = t.scrollTop; };
+  $("#fmewrap").onchange = (e) => { t.wrap = e.target.checked ? "soft" : "off"; g.hidden = e.target.checked; };
+  t.onkeydown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save(); }
+    else if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); const s0 = t.selectionStart; t.setRangeText("  ", s0, t.selectionEnd, "end"); lines(); state(); }
+  };
+  const save = async (force = false) => {
+    if (!dirty() && !force) return;
+    const r = await fmApi("", { method: "PUT", body: { path, content: t.value, mtime: force ? null : FM.editing.mtime } }).catch((e) => e);
+    if (r instanceof Error) {
+      if (/changed since/.test(r.message)) {
+        if (await fmConfirm("This file changed since you opened it (the server may have written it). Save your version over it?", "Save over it")) return save(true);
+        return;
+      }
+      return toast(r.message, true);
+    }
+    FM.editing.mtime = r.mtime; FM.editing.saved = t.value; state(); toast("Saved");
+  };
+  $("#fmesave").onclick = () => save();
+  const leave = async () => {
+    if (dirty() && !await fmConfirm("Leave without saving your changes?", "Leave")) return;
+    FM.editing = null; tabFiles(FM.sid, LIST.find((x) => x.id === FM.sid) || {}, FM.path);
+  };
+  $("#fmeclose").onclick = leave; $("#fmeback").onclick = leave;
+  $("#fmedl").onclick = () => fmDownload([path]);
+  t.focus();
+}
+window.addEventListener("beforeunload", (e) => { if (FM.editing && $("#fmet") && $("#fmet").value !== FM.editing.saved) { e.preventDefault(); e.returnValue = ""; } });
 
 const fmtB = (n) => n == null ? "–" : n >= 2 ** 30 ? `${(n / 2 ** 30).toFixed(1)} GB` : n >= 2 ** 20 ? `${(n / 2 ** 20).toFixed(n < 10 * 2 ** 20 ? 1 : 0)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
 const KEEP = [["last", "Most recent"], ["hourly", "Hourly"], ["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"]];
