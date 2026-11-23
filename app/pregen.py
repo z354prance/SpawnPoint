@@ -305,6 +305,12 @@ async def run(sid: str, fresh: bool) -> None:
         # as people explore, which vanilla handles easily.
         p.update(stage="done", spawn_only=True, paused=False, held=False)
         state.save()
+    if p["stage"] == "skipped" and await asyncio.to_thread(servers.has_mod, s, "chunky"):
+        # An earlier start couldn't reach Chunky (the server was crashing) and gave up on
+        # pre-generation. Chunky is here, so pick it up again.
+        log.info("[%s] Chunky is installed: resuming pre-generation that was skipped", sid)
+        p.update(stage="background", method="chunky")
+        state.save()
     stage = p["stage"]
     if stage in ("done", "skipped"):
         if await servers.boot_ready(sid, config.INSTALL_TIMEOUT_S if s.get("pack_pending") else 600):
@@ -330,6 +336,11 @@ async def run(sid: str, fresh: bool) -> None:
         new_task = True
         _pg(sid, stage="spawn", percent=0.0)
         ok = await _generate(s, s["pregen"]["spawn_radius"], throttle=False, fresh_task=True)
+        if ok is None and await asyncio.to_thread(servers.has_mod, state.get(sid), "chunky"):
+            # Chunky is installed but didn't answer (the server crashed or froze): that's a
+            # failed start, not a server that can't pre-generate. Try again next start.
+            await servers.start_failed(sid, "Server didn't answer while generating spawn. Check the console.")
+            return
         if ok is None:
             log.warning("[%s] this server can't pre-generate (no Chunky, no /forceload); skipping", sid)
             _pg(sid, stage="skipped")

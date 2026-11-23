@@ -1,3 +1,4 @@
+import json
 """Pre-generation without Chunky: /forceload batches, checked against the region files."""
 import asyncio
 import os
@@ -135,6 +136,47 @@ def test_empty_pause_off_while_generating(monkeypatch, tmp_path):
     pregen._pg("v", stage="background")
     servers.apply_empty_pause(state.get("v"))
     assert "pause-when-empty" not in p.read_text()
+
+
+def test_watchdog_and_chunky_while_generating(monkeypatch, tmp_path):
+    """No watchdog crash loop while pre-generating: a longer max-tick-time, and Chunky
+    doesn't resume by itself at full speed after a restart."""
+    _setup(monkeypatch, tmp_path)
+    p = tmp_path / "v" / "server.properties"
+    p.write_text("motd=v\nmax-tick-time=60000\n")
+    cj = tmp_path / "v" / "config" / "chunky" / "config.json"
+    cj.parent.mkdir(parents=True)
+    cj.write_text('{"version": 2, "continueOnRestart": true, "silent": false}')
+    pregen._pg("v", stage="background")
+    servers.apply_empty_pause(state.get("v"))
+    assert "max-tick-time=300000" in p.read_text() and state.get("v")["tick_time_restore"] == "60000"
+    assert json.loads(cj.read_text())["continueOnRestart"] is False
+    pregen._pg("v", stage="done")
+    servers.apply_empty_pause(state.get("v"))
+    assert "max-tick-time=60000" in p.read_text() and state.get("v")["tick_time_restore"] is None
+    p.write_text("motd=v\nmax-tick-time=-1\n")                # watchdog already off: left alone
+    pregen._pg("v", stage="background")
+    servers.apply_empty_pause(state.get("v"))
+    assert "max-tick-time=-1" in p.read_text()
+
+
+def test_skipped_pregen_comes_back_with_chunky(monkeypatch, tmp_path):
+    _setup(monkeypatch, tmp_path)
+    pregen._pg("v", stage="skipped")
+    monkeypatch.setattr(servers, "has_mod", lambda s, slug, *a: slug == "chunky")
+    calls = []
+
+    async def boot_ready(sid, timeout, burst=False):
+        calls.append("boot")
+        return True
+
+    async def nothing(*a, **k):
+        return None
+    monkeypatch.setattr(servers, "boot_ready", boot_ready)
+    monkeypatch.setattr(servers, "go_online", nothing)
+    monkeypatch.setattr(pregen, "background", nothing)
+    asyncio.run(pregen.run("v", fresh=False))
+    assert state.get("v")["pregen"]["stage"] == "background" and state.get("v")["pregen"]["method"] == "chunky"
 
 
 def test_forceload_finds_26_1_worlds(monkeypatch, tmp_path):

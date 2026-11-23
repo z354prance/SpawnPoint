@@ -4,6 +4,7 @@ hostname up in state and only forwards players to servers whose phase is 'online
 import asyncio
 import glob
 import logging
+import json
 import os
 import re
 import secrets
@@ -311,6 +312,56 @@ def apply_empty_pause(s: dict) -> None:
         if cur is not None and cur.strip() == "0":
             write_properties(sid, {"pause-when-empty-seconds": s["empty_pause_restore"]})
         state.update(sid, empty_pause_restore=None)
+    # The watchdog kills the server when one tick takes over a minute (max-tick-time).
+    # Heavy modpacks can stall that long saving a burst of freshly generated chunks, and
+    # Chunky picks up where it left off after the restart, so it crashes again and again.
+    # Give it 5 minutes while pre-generating; SpawnPoint pauses generation when ticks get
+    # long anyway. The server's own value goes back afterwards.
+    tick = (props.get("max-tick-time") or "60000").strip()
+    s = state.get(sid)
+    try:
+        short = 0 < int(tick) < int(PREGEN_TICK_TIME)            # -1 or 0 = watchdog already off
+    except ValueError:
+        short = False
+    if active and short:
+        state.update(sid, tick_time_restore=tick)
+        write_properties(sid, {"max-tick-time": PREGEN_TICK_TIME})
+    elif not active and s.get("tick_time_restore") is not None:
+        if tick == PREGEN_TICK_TIME:
+            write_properties(sid, {"max-tick-time": s["tick_time_restore"]})
+        state.update(sid, tick_time_restore=None)
+    chunky_no_autoresume(sid)
+
+
+PREGEN_TICK_TIME = "300000"
+
+
+def chunky_no_autoresume(sid: str) -> None:
+    """Chunky can carry on with its last task by itself after a restart, at full speed and
+    before SpawnPoint can slow it down or pause it. SpawnPoint resumes it itself, so turn
+    that off (some modpacks ship it on)."""
+    base = dockerctl.server_dir(sid)
+    j = os.path.join(base, "config", "chunky", "config.json")
+    if os.path.exists(j):
+        try:
+            with open(j, encoding="utf-8") as f:
+                cfg = json.load(f)
+            if cfg.get("continueOnRestart"):
+                cfg["continueOnRestart"] = False
+                with open(j, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, indent=2)
+        except (OSError, ValueError):
+            pass
+    y = os.path.join(base, "plugins", "Chunky", "config.yml")
+    if os.path.exists(y):
+        try:
+            text = open(y, encoding="utf-8").read()
+            new = re.sub(r"(?m)^(\s*continue-on-restart:\s*)true\b", r"\1false", text)
+            if new != text:
+                with open(y, "w", encoding="utf-8") as f:
+                    f.write(new)
+        except OSError:
+            pass
 
 
 async def _boot(s: dict, burst: bool = False) -> None:
