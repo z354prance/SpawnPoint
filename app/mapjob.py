@@ -66,4 +66,5 @@ def main(arg: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    # The job comes on stdin: a big world's list is far past the 128 KB limit on one argument.
+    main(sys.argv[1] if len(sys.argv) > 1 else sys.stdin.read())

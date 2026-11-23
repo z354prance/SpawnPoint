@@ -349,9 +349,16 @@ async def render(sid: str, mspt_of) -> bool:
                "cache_dir": os.path.join(ROOT, ".textures"), "todo": [t[:6] for t in todo],
                "legacy": await asyncio.to_thread(legacy_registry, sid)}
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "app.mapjob", json.dumps(job), cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True, limit=1 << 20)
+            sys.executable, "-m", "app.mapjob", cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            start_new_session=True, limit=1 << 20)
         _procs[sid] = proc
+        try:
+            proc.stdin.write(json.dumps(job).encode())
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass                                            # it died at once: its stderr says why below
+        proc.stdin.close()
         mtimes = {(t[0], t[1], t[2]): t[6] for t in todo}
         results, done, paused, errors = [], 0, False, []
         skipped: dict[str, list] = {}                       # reason -> [chunk count, example region]

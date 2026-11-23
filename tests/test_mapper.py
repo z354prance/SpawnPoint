@@ -525,3 +525,16 @@ def test_26_x_string_palettes():
         names, h, _ = flatmap.chunk_columns(flatmap.parse_nbt(chunk_118(70, strings=kind)), "overworld")
         assert names[3, 3] == "minecraft:grass_block" and h[3, 3] == 70, kind
         assert (names != "minecraft:stone").all(), kind
+
+
+def test_render_a_job_too_big_for_one_argument(world, tmp_path, monkeypatch):
+    """Big imported worlds made a job list past Linux's 128 KB limit on one argument
+    ("[Errno 7] Argument list too long"). The job goes through stdin now."""
+    monkeypatch.setattr(state, "_path", str(tmp_path / "state.json"))
+    monkeypatch.setattr(state, "_state", {"servers": {}})
+    monkeypatch.setattr(topology, "_allocator", _Alloc())
+    state.put({"id": "aoc", "name": "aoc", "phase": "stopped", "mc_version": None})
+    write_region(str(world / "world" / "region" / "r.0.0.mca"), {(0, 0): chunk_118(70)})
+    monkeypatch.setattr(mapper, "legacy_registry", lambda sid: {"blocks": {str(i): "minecraft:stone" for i in range(30000)}, "biomes": {}})
+    ok = asyncio.run(mapper.render("aoc", lambda sid: None))
+    assert ok and state.get("aoc")["map"]["status"] == "ready", state.get("aoc")["map"]
