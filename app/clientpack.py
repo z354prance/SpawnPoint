@@ -95,6 +95,17 @@ def ensure(s: dict) -> dict:
     return st
 
 
+def prepare(s: dict) -> None:
+    """Get the player copy of this server's pack version ready ahead of time (on create,
+    start, update and rollback), so the first player after a change doesn't wait for it."""
+    from . import playerpack
+    try:
+        if key(s) and playerpack.enabled(s):
+            ensure(s)
+    except Exception as e:                                   # never let this get in the way of a start
+        log.warning("[%s] couldn't start preparing the client pack: %s", s.get("id"), e)
+
+
 def _write_status(d: str, **st) -> None:
     os.makedirs(d, exist_ok=True)
     tmp = os.path.join(d, "status.json.part")

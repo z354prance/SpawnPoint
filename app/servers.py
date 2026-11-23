@@ -385,6 +385,8 @@ async def _boot(s: dict, burst: bool = False) -> None:
         await ensure_pack_helpers(s)
         await realip.ensure(state.get(s["id"]))
         s = state.get(s["id"])
+    from . import clientpack
+    clientpack.prepare(state.get(s["id"]))                    # players' copy of a new pack version
     alloc = topology.allocator()
     alloc.assign_home(s["id"], s["home_groups"])
     if burst:

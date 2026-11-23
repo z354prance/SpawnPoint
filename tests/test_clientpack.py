@@ -118,3 +118,17 @@ def test_ftb_pack_and_custom_servers(tmp_path, monkeypatch):
     state.update("p", kind="imported", pack=None)
     assert clientpack.key(state.get("p")) is None
     assert "mods/jei-extra.jar" in playerpack.files(state.get("p"))[0]
+
+
+def test_prepare_starts_only_for_enabled_official_packs(monkeypatch):
+    from app import clientpack, playerpack
+    calls = []
+    monkeypatch.setattr(clientpack, "ensure", lambda s: calls.append(s["id"]))
+    on = {"player_pack": {"enabled": True, "token": "t"}}
+    monkeypatch.setattr(playerpack, "settings", lambda s: s.get("player_pack") or {})
+    clientpack.prepare({"id": "a", "kind": "curseforge", "pack": {"id": 1, "file_id": 2}, **on})
+    clientpack.prepare({"id": "b", "kind": "curseforge", "pack": {"id": 1, "file_id": 2}})   # player pack off
+    clientpack.prepare({"id": "c", "kind": "neoforge", "pack": None, **on})                  # custom server
+    monkeypatch.setattr(clientpack, "ensure", lambda s: 1 / 0)
+    clientpack.prepare({"id": "d", "kind": "modrinth", "pack": {"project": "p", "version_id": "v"}, **on})  # never raises
+    assert calls == ["a"]

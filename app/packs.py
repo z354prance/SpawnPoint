@@ -140,6 +140,8 @@ async def update(sid: str) -> dict:
     prev = {"pack": s["pack"], "mc_version": s.get("mc_version"), "java_tag": s.get("java_tag"),
             "backup": snap.get("id"), "at": time.time(), "to": v.get("name")}
     state.update(sid, pack_prev=prev, **_apply(s, v))
+    from . import clientpack
+    clientpack.prepare(state.get(sid))                       # start on the players' copy right away
     if was_running:
         await servers.restart(sid)
     return {"version": v.get("name"), "restarted": was_running}
@@ -158,6 +160,8 @@ async def rollback(sid: str) -> dict:
     await backups.restore(sid, prev["backup"])
     state.update(sid, pack=prev["pack"], mc_version=prev["mc_version"], java_tag=prev["java_tag"],
                  pack_prev=None, pack_pending=True, pack_update=None, pack_checked=0)
+    from . import clientpack
+    clientpack.prepare(state.get(sid))
     if was_running:
         await servers.start(sid)
     return {"restarted": was_running}
