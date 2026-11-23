@@ -163,19 +163,10 @@ def test_watchdog_and_chunky_while_generating(monkeypatch, tmp_path):
 def test_skipped_pregen_comes_back_with_chunky(monkeypatch, tmp_path):
     _setup(monkeypatch, tmp_path)
     pregen._pg("v", stage="skipped")
+    monkeypatch.setattr(servers, "has_mod", lambda s, slug, *a: False)
+    assert not pregen.unskip("v") and state.get("v")["pregen"]["stage"] == "skipped"
     monkeypatch.setattr(servers, "has_mod", lambda s, slug, *a: slug == "chunky")
-    calls = []
-
-    async def boot_ready(sid, timeout, burst=False):
-        calls.append("boot")
-        return True
-
-    async def nothing(*a, **k):
-        return None
-    monkeypatch.setattr(servers, "boot_ready", boot_ready)
-    monkeypatch.setattr(servers, "go_online", nothing)
-    monkeypatch.setattr(pregen, "background", nothing)
-    asyncio.run(pregen.run("v", fresh=False))
+    assert pregen.unskip("v")
     assert state.get("v")["pregen"]["stage"] == "background" and state.get("v")["pregen"]["method"] == "chunky"
 
 

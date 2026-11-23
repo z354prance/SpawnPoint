@@ -1111,21 +1111,17 @@ async function drawPlayerPack(sid, p) {
       <div class="row" style="flex-wrap:nowrap;margin-top:6px"><input class="mono" readonly style="flex:1" value="${esc(p.page || "Save the address above to get the link")}" aria-label="Player pack link">
       ${p.page ? `<button class="small" id="ppcopy">Copy</button>` : ""}<button class="small" id="ppnew">New link</button></div>
       <div id="ppcount">${p.mods !== undefined ? packCounts(p) : `<p class="sub">Counting what's in it…</p>`}</div>
-      <label class="row" style="color:var(--ink);margin-top:12px"><input type="checkbox" id="ppsync" ${p.sync ? "checked" : ""}> Keep players' mods in sync with AutoModpack</label>
-      ${p.sync_pending ? `<p class="sub" style="color:var(--warn)">AutoModpack is added but isn't on the server yet: restart the server to download it. Until then, the zip and the Modrinth file still carry all the mods and tell players to download again after changes. <button class="small" id="pprestart">Restart now</button></p>` : p.sync ? `<p class="sub" style="color:var(--gold)">AutoModpack is running. The zip and the Modrinth file only carry AutoModpack, which brings the rest on first join.</p>` : ""}
-      <p class="sub">Adds the AutoModpack mod to the server and to all three downloads. When this server's mods change, players' copies update the next time they join, whichever launcher they use. It goes through the same address and port as the game.</p>` : ""}
+      <p class="sub" style="margin-top:10px">The Prism Launcher download updates itself every time players press Play. The Modrinth App file and the zip are the files as they are now: players download them again after you change mods. Nothing is added to the server for any of this.</p>` : ""}
     <p class="sub" style="color:var(--warn)">Mods belong to their authors and many licences don't allow sharing them elsewhere. Keep the link to your own players. For a public modpack server, point people to the official pack instead.</p>
     <div class="row" style="justify-content:flex-end;gap:8px;margin-top:10px">${p.page ? `<a class="btn small" href="${esc(p.page)}" target="_blank" rel="noopener">Open the page</a>` : ""}<button class="primary small" id="ppsave">Save</button></div>`;
   const save = async (extra = {}, msg = "Player pack saved") => {
     const r = await act(() => api(`/servers/${sid}/player-pack`, { method: "PUT",
       body: { enabled: $("#ppon").checked, base_url: $("#ppbase").value, ...extra } }), msg);
-    if (r) { if (r.note) toast(r.note); drawPlayerPack(sid, r); }
+    if (r) drawPlayerPack(sid, r);
   };
-  $("#ppsave").onclick = () => save($("#ppsync") ? { sync: $("#ppsync").checked } : {});
+  $("#ppsave").onclick = () => save();
   $("#ppon").onchange = () => save();
-  $("#ppsync") && ($("#ppsync").onchange = () => save({ sync: $("#ppsync").checked }));
   $("#ppnew") && ($("#ppnew").onclick = () => confirm("Make a new link? The old one stops working, and Prism instances made from it stop updating.") && save({ new_link: true }, "New link made"));
-  $("#pprestart") && ($("#pprestart").onclick = async () => { if (await act(() => api(`/servers/${sid}/action/restart`, { method: "POST" }), "Restarting to add AutoModpack")) refreshList(); });
   $("#ppcopy") && ($("#ppcopy").onclick = () => navigator.clipboard.writeText(p.page).then(() => toast("Link copied")));
   if (p.enabled && p.mods === undefined) fillPackCounts(sid, $("#ppcount"));
 }
@@ -1142,9 +1138,7 @@ async function openPlayerPack(sid) {
       <button class="primary small" id="ppmcopy">Copy</button><a class="btn small" href="${esc(p.page)}" target="_blank" rel="noopener">Open</a></div>`
       : `<p class="banner">The link needs the address players open SpawnPoint at. Set it in Settings → Player pack.</p>`}
     <div id="ppmcount" style="margin-top:12px"><p class="sub">Counting what's in it…</p></div>
-    <p class="sub">${p.sync ? "AutoModpack is on: players' mods update when they join, whichever launcher they use."
-      : p.sync_pending ? "AutoModpack is added but starts with the server's next restart."
-      : "Prism keeps mods updated by itself; with the other downloads, players download again after mod changes."}</p>
+    <p class="sub">The Prism Launcher download updates itself every time players press Play; with the other downloads, players download again after mod changes.</p>
     <div class="row" style="justify-content:space-between;margin-top:14px">${can("moderator") ? `<button class="ghost small" id="ppmset">Settings</button>` : "<span></span>"}<button class="small" onclick="closeModal()">Close</button></div>`);
   $("#ppmcopy") && ($("#ppmcopy").onclick = () => navigator.clipboard.writeText(p.page).then(() => toast("Link copied")));
   $("#pplink")?.addEventListener("focus", (e) => e.target.select());

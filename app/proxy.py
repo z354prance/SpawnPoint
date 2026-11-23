@@ -247,15 +247,6 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
                     continue
             if buf[0] == 0xFE:  # pre-1.7 legacy ping: not supported
                 return
-            if buf[:4] == b"AMMH":
-                # AutoModpack fetching a server's mods: "AMMH", a 2-byte length, the host
-                # the player typed. Route it by that host to the server's AutoModpack port.
-                if len(buf) < 6 or len(buf) < 6 + struct.unpack(">H", buf[4:6])[0]:
-                    continue
-                n = struct.unpack(">H", buf[4:6])[0]
-                await _automodpack(buf, clean_host(buf[6:6 + n].decode("utf-8", "replace")), reader, writer,
-                                   client_ip, client_port)
-                return
             parsed = parse_handshake(buf)
             if parsed:
                 break
@@ -301,28 +292,6 @@ async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
             writer.close()
         except Exception:
             pass
-
-
-async def _automodpack(buf: bytes, host: str, reader, writer, client_ip: str, client_port: int) -> None:
-    from . import playerpack
-    s = lookup(host)
-    if not s or s.get("phase") != "online" or not (s.get("player_pack") or {}).get("sync"):
-        return
-    try:
-        ip, _ = await asyncio.to_thread(backend_for, s)
-        port = await asyncio.to_thread(playerpack.automodpack_port, dockerctl.server_dir(s["id"]))
-        br, bw = await asyncio.wait_for(asyncio.open_connection(ip, port), 5)
-    except (OSError, asyncio.TimeoutError):
-        return
-    _nodelay(bw)
-    if s.get("real_ip"):
-        # AutoModpack checks downloads against the player's address, which the game sees
-        # through the same header, so both sides agree on who this is.
-        bw.write(proxyproto.build_v2(client_ip, client_port, ip, port))
-    bw.write(buf)
-    await bw.drain()
-    log.info("mods %s -> %s", client_ip, host)
-    await asyncio.gather(_pipe(reader, bw), _pipe(br, writer))
 
 
 async def serve() -> asyncio.base_events.Server:

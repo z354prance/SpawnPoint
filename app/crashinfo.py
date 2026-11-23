@@ -105,6 +105,19 @@ def _short_exc(exc: str) -> str:
     return f"{name}: {msg}" if msg else name
 
 
+def _case_twins(base: str) -> list[list[str]]:
+    """Files whose names differ only in capitals. On Linux they're two files, and mods that
+    load every file in a folder (FTB Quests' reward tables, for one) load the data twice."""
+    groups: dict[str, list[str]] = {}
+    for top in ("config", "defaultconfigs", "kubejs"):
+        root = os.path.join(base, top)
+        for dirpath, _, filenames in os.walk(root):
+            for f in filenames:
+                rel = os.path.relpath(os.path.join(dirpath, f), base).replace(os.sep, "/")
+                groups.setdefault(rel.lower(), []).append(rel)
+    return [sorted(v) for v in groups.values() if len(v) > 1]
+
+
 def explain(sid: str, log_lines: list[str], since: float | None = None, mods_dir: str | None = None,
             base: str | None = None) -> dict:
     """What went wrong, from the newest crash report (newer than `since`) and the log.
@@ -145,6 +158,20 @@ def explain(sid: str, log_lines: list[str], since: float | None = None, mods_dir
         detail = f"Two files are the same mod ({dup[0][0]}): {dup[0][1][:200]}." if dup else _DUPLICATE.search(log).group(0)[:300]
         return done("The same mod is installed twice", detail, dup[0][0] if dup else "",
                     "Remove the older file from the Mods tab.")
+    rep = _newest_report(base, since)
+    m = re.search(r"Itemstack \d+ (\S+) already exists in the tab's list", log + (_read(rep) if rep else ""))
+    if m:
+        twins = _case_twins(base)
+        if twins:
+            shown = "; ".join(" and ".join(g) for g in twins[:3]) + (f" (and {len(twins) - 3} more)" if len(twins) > 3 else "")
+            return done("Two copies of the same file",
+                        f"{m.group(1)} was added twice, because these files are the same except for capitals, "
+                        f"and the game loads both: {shown}.", "",
+                        "In the Files tab, delete the lower-case copy of each (and any .OLD files next to them), "
+                        "then start the server.")
+        return done("An item was added to the creative menu twice", f"{m.group(1)} was added twice while the server "
+                    "started. This is usually a quest or recipe file that exists twice.", "",
+                    "Look for duplicated files in the config folder, especially config/ftbquests.")
     if "UnsupportedClassVersionError" in log or re.search(r"requires Java \d+", log):
         m = re.search(r"class file version (\d+)", log)
         java = {61: 17, 65: 21, 69: 25}.get(int(m.group(1)), 0) if m else 0

@@ -1571,7 +1571,6 @@ async def set_bedrock(sid: str, body: BedrockBody):
 class PlayerPackReq(BaseModel):
     enabled: bool | None = None
     new_link: bool = False
-    sync: bool | None = None
     base_url: str | None = None
 
 
@@ -1579,11 +1578,9 @@ def _pack_view(sid: str, details: bool = True) -> dict:
     from . import playerpack
     s = _get(sid)
     pp = playerpack.settings(s)
-    out = {"enabled": playerpack.enabled(s), "token": pp.get("token"), "sync": bool(pp.get("sync")),
+    out = {"enabled": playerpack.enabled(s), "token": pp.get("token"),
            "base_url": pp.get("base_url", ""), "page": playerpack.page_url(s),
-           "modded": s.get("loader") not in ("vanilla", "paper", "purpur", None, ""),
-           "automodpack": bool(playerpack.automodpack_jar(s)),
-           "sync_pending": bool(pp.get("sync")) and not playerpack.automodpack_jar(s)}
+           "modded": s.get("loader") not in ("vanilla", "paper", "purpur", None, "")}
     if out["enabled"] and details:
         fl, left = playerpack.files(s)
         out.update(count=len(fl), mods=sum(1 for k in fl if k.startswith("mods/")), left_out=left[:200],
@@ -1609,13 +1606,7 @@ async def player_pack_put(sid: str, body: PlayerPackReq):
         cur["base_url"] = u
         state.update(sid, player_pack=cur)
     playerpack.set_settings(sid, on=body.enabled, new_link=body.new_link)
-    note = ""
-    if body.sync is not None and body.sync != bool(playerpack.settings(state.get(sid)).get("sync")):
-        try:
-            note = await playerpack.set_sync(sid, body.sync)
-        except ValueError as e:
-            raise HTTPException(409, f"AutoModpack isn't available for this server: {e}")
-    return {**(await asyncio.to_thread(_pack_view, sid, False)), "note": note}
+    return await asyncio.to_thread(_pack_view, sid, False)
 
 
 def _pack_server(token: str) -> dict:
@@ -1640,7 +1631,7 @@ async def player_pack_info(token: str):
     _, _, fl, _ = await asyncio.to_thread(playerpack.index, s)
     return {"name": s["name"], "address": s.get("hostname"), "mc_version": s.get("mc_version"), "loader": loader,
             "loader_version": lver, "mods": sum(1 for k in fl if k.startswith("mods/")),
-            "size": sum(os.path.getsize(v) for v in fl.values()), "sync": playerpack.sync_active(s),
+            "size": sum(os.path.getsize(v) for v in fl.values()),
             "pack": {"title": (s.get("pack") or {}).get("title"), "version": (s.get("pack") or {}).get("version")} if s.get("pack") else None,
             "online": s.get("phase") == "online"}
 

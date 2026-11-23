@@ -3,8 +3,9 @@ served by SpawnPoint itself from the server's files (no Modrinth or CurseForge a
 
   * A Prism Launcher instance (prism.zip) that runs packwiz-installer before every launch,
     so mods added or updated on the server reach players the next time they play.
-  * A plain zip (pack.zip) for any other launcher: the mods and client files, plus
-    AutoModpack when that's turned on, which keeps them in sync whenever they join.
+  * A Modrinth App file (.mrpack) and a plain zip (pack.zip) for any other launcher: the
+    mods and client files as they are now. Players download them again after changes.
+Nothing is ever added to the game server for this: everything is read from its files.
 
 Everything is behind an unguessable link (/p/<token>), like the public map. Mods are
 other people's work: the Settings card says so, since many licences forbid rehosting.
@@ -40,7 +41,6 @@ SERVER_ONLY = re.compile(r"(chunky|haproxy|proxy[-_]?protocol|ng[-_]?haproxy|spa
 SECRET = re.compile(rb"(token|password|passwd|secret|webhook|api[_-]?key|client[_-]?secret)\s*[\"']?\s*[:=]\s*[\"']?"
                     rb"[A-Za-z0-9_\-\.+/]{12,}", re.I)
 MAX_FILE = 64 * 2**20                      # bigger files in client folders are skipped (world saves, caches)
-AUTOMODPACK_PORT = 25580                   # inside the server's container only; the router forwards to it
 BOOTSTRAP = os.environ.get("PACKWIZ_BOOTSTRAP", "/opt/spawnpoint/assets/packwiz-installer-bootstrap.jar")
 BOOTSTRAP_URL = "https://github.com/packwiz/packwiz-installer-bootstrap/releases/latest/download/packwiz-installer-bootstrap.jar"
 
@@ -50,9 +50,6 @@ _lock = threading.Lock()
 
 
 # ------------------------------------------------------------------ settings
-def sync_active(s: dict) -> bool:
-    """AutoModpack is on and its jar is on the server (it arrives at the next start)."""
-    return bool(settings(s).get("sync") and automodpack_jar(s))
 
 def settings(s: dict) -> dict:
     return dict(s.get("player_pack") or {})
@@ -62,15 +59,13 @@ def enabled(s: dict) -> bool:
     return bool(settings(s).get("enabled") and settings(s).get("token"))
 
 
-def set_settings(sid: str, on: bool | None = None, new_link: bool = False, sync: bool | None = None) -> dict:
+def set_settings(sid: str, on: bool | None = None, new_link: bool = False) -> dict:
     s = state.get(sid)
     cur = settings(s)
     if new_link or not cur.get("token"):
         cur["token"] = secrets.token_urlsafe(12)
     if on is not None:
         cur["enabled"] = bool(on)
-    if sync is not None:
-        cur["sync"] = bool(sync)
     state.update(sid, player_pack=cur)
     _index_cache.pop(sid, None)
     return cur
@@ -177,9 +172,7 @@ def files(s: dict) -> tuple[dict[str, str], list[str]]:
             if f.endswith(".jar.disabled") and f[:-len(".disabled")] in _auto_disabled(s):
                 out[f"mods/{f[:-len('.disabled')]}"] = p          # client-only: off on the server, needed by players
             elif f.endswith(".jar"):
-                if f.lower().startswith("automodpack") and settings(s).get("sync"):
-                    out[f"mods/{f}"] = p                       # players need it too, to stay in sync
-                elif SERVER_ONLY.search(f) or _fabric_server_only(p):
+                if SERVER_ONLY.search(f) or _fabric_server_only(p):
                     left.append(f"{mod_folder}/{f} (only used by the server)")
                 else:
                     out[f"mods/{f}"] = p
@@ -319,11 +312,7 @@ def prism_zip(s: dict, pack_url: str) -> bytes:
 def plain_zip_files(s: dict) -> list[tuple[str, str | bytes]]:
     """(name in zip, file path or bytes) for the any-launcher zip."""
     _, _, fl, _ = index(s)
-    amp = automodpack_jar(s) if sync_active(s) else None
-    if amp:                                                   # AutoModpack fetches the rest on first join
-        items: list[tuple[str, str | bytes]] = [(f"mods/{os.path.basename(amp)}", amp)]
-    else:
-        items = sorted(fl.items())
+    items: list[tuple[str, str | bytes]] = sorted(fl.items())
     loader, lver = loader_info(s)
     items.append(("servers.dat", _servers_dat(s.get("name", s["id"]), s.get("hostname", ""))))
     items.append(("READ ME.txt", readme(s, loader, lver).encode()))
@@ -331,7 +320,6 @@ def plain_zip_files(s: dict) -> list[tuple[str, str | bytes]]:
 
 
 def readme(s: dict, loader: str, lver: str) -> str:
-    sync = sync_active(s)
     ld = {"neoforge": "NeoForge", "forge": "Forge", "fabric": "Fabric", "quilt": "Quilt"}.get(loader, loader)
     return "\n".join([
         f"{s.get('name', s['id'])}: files for joining {s.get('hostname', '')}", "",
@@ -339,172 +327,39 @@ def readme(s: dict, loader: str, lver: str) -> str:
         "2. Copy everything in this zip into that profile's game folder, replacing files if asked.",
         "   servers.dat adds the server to your multiplayer list.",
         f"3. Start the game and join {s.get('hostname', '')}.", "",
-        ("This zip only has AutoModpack in it. When you join, it asks you to trust the server, downloads the "
-         "server's mods and settings, and restarts the game. After that, joining keeps them up to date." if sync else
-         "When the server's mods change, download this zip again."),
-        "", "Using Prism Launcher? The Prism download on the same page updates itself every time you play.", ""])
+        "When the server's mods change, download this zip again.", "",
+        "Using Prism Launcher? The Prism download on the same page updates itself every time you play.", ""])
 
 
-# ------------------------------------------------------------------ AutoModpack on the server
-def automodpack_jar(s: dict) -> str | None:
-    mdir = servers.mods_dir(s)
-    try:
-        return next((os.path.join(mdir, f) for f in sorted(os.listdir(mdir))
-                     if f.lower().startswith("automodpack") and f.endswith(".jar")), None)
-    except OSError:
-        return None
-
-
-def _amp_config(base: str) -> tuple[str, dict | None]:
-    p = os.path.join(base, "automodpack", "automodpack-server.json")
-    try:
-        with open(p, encoding="utf-8") as f:
-            return p, json.load(f)
-    except (OSError, ValueError):
-        return p, None
-
-
-def automodpack_port(base: str) -> int:
-    """Where AutoModpack listens inside the container. Releases up to 4.x share the game's
-    port (they spot their own connections by the AMMH greeting); newer ones can be given
-    their own port ("connection-mode": "MAGIC"), which SpawnPoint uses when it's there."""
-    _, cfg = _amp_config(base)
-    return AUTOMODPACK_PORT if cfg and "connection-mode" in cfg else 25565
-
-
-def configure_automodpack(base: str, real_ip: bool, page_url: str, extra: dict[str, str] | None = None) -> None:
-    """AutoModpack's server settings. The router sends connections starting with AMMH to
-    it, with the player's real IP the same way the game gets it (AutoModpack checks
-    downloads against that address). Client-only files go in host-modpack/main so
-    AutoModpack players get them too. AutoModpack writes its settings file on its first
-    start; until then there's nothing to change."""
-    d = os.path.join(base, "automodpack")
-    p, cur = _amp_config(base)
-    link = page_url or "https://modrinth.com/project/automodpack"
-    if cur is None:
-        # AutoModpack hasn't started yet. It makes its own folder on first start; making
-        # it here would leave it owned by SpawnPoint and unwritable for the server.
+# ------------------------------------------------------------------ leftovers from AutoModpack
+# Earlier versions could add AutoModpack to the server to keep players' mods in sync. It
+# hooked into the server's connections and its folder copied the server's configs, so it's
+# gone: servers that had it get it removed at their next start.
+def before_boot(s: dict) -> None:
+    if "sync" not in settings(s):
         return
-    if cur is not None:
-        if "connection-mode" in cur:                           # newer format, kebab-case
-            want = {"connection-mode": "MAGIC", "bind-port": AUTOMODPACK_PORT, "advertised-endpoint-port": -1,
-                    "accept-proxy-protocol": bool(real_ip), "nag-message": "Get this server's mods to join:",
-                    "nag-clickable-message": "Download the player pack", "nag-clickable-link": link}
-            stray = []
-        else:                                                  # 4.x: on the game's port
-            want = {"bindPort": -1, "portToSend": -1, "addressToSend": "", "nagMessage": "Get this server's mods to join:",
-                    "nagClickableMessage": "Download the player pack", "nagClickableLink": link}
-            stray = [k for k in cur if "-" in k]               # keys an earlier SpawnPoint wrote by mistake
-        if stray or any(cur.get(k) != v for k, v in want.items()):
-            for k in stray:
-                cur.pop(k)
-            cur.update(want)
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump(cur, f, indent=2)
-    _sync_host_files(os.path.join(d, "host-modpack", "main"), extra or {})
-    own_like(d, base)
+    sid = s["id"]
+    for m in s.get("managed_mods", []):
+        if m.get("slug") == "automodpack":
+            servers.remove_managed_mod(sid, m["project_id"])
+    try:
+        mdir = servers.mods_dir(s)
+        for f in os.listdir(mdir):
+            if f.lower().startswith("automodpack") and f.endswith(".jar"):
+                os.remove(os.path.join(mdir, f))
+    except OSError:
+        pass
+    import shutil
+    shutil.rmtree(os.path.join(dockerctl.server_dir(sid), "automodpack"), ignore_errors=True)
+    pp = settings(s)
+    pp.pop("sync", None)
+    state.update(sid, player_pack=pp)
+    log.info("[%s] removed AutoModpack (no longer used by player packs)", sid)
 
 
 def own_like(path: str, ref: str) -> None:
     from . import files
     files.own_like(path, ref)
-
-
-def _sync_host_files(host: str, extra: dict[str, str]) -> None:
-    """Mirror the extra files into AutoModpack's host folder: hard links where possible
-    (no extra disk space), copies otherwise. Files no longer wanted are removed."""
-    import shutil
-    os.makedirs(host, exist_ok=True)
-    for rel, src in extra.items():
-        dst = os.path.join(host, rel)
-        try:
-            st, sd = os.stat(src), (os.stat(dst) if os.path.exists(dst) else None)
-            if sd and (sd.st_ino == st.st_ino or (sd.st_size == st.st_size and int(sd.st_mtime) == int(st.st_mtime))):
-                continue
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            if sd:
-                os.remove(dst)
-            try:
-                os.link(src, dst)
-            except OSError:
-                shutil.copy2(src, dst)
-        except OSError as e:
-            log.info("couldn't give AutoModpack %s: %s", rel, e)
-    want = {os.path.normpath(r) for r in extra}
-    for dirpath, _, filenames in os.walk(host, topdown=False):
-        for f in filenames:
-            rel = os.path.relpath(os.path.join(dirpath, f), host)
-            if os.path.normpath(rel) not in want:
-                try:
-                    os.remove(os.path.join(dirpath, f))
-                except OSError:
-                    pass
-        if dirpath != host and not os.listdir(dirpath):
-            os.rmdir(dirpath)
-
-
-def client_only_extras(s: dict) -> dict[str, str]:
-    """What AutoModpack should hand out besides what it finds itself (the mods folder and
-    KubeJS): the client-only mods SpawnPoint turned off on the server, and the checked
-    client files (configs, resource packs, shader packs), minus anything that looked like
-    it holds a password. Players' edits to configs are kept (AutoModpack's default)."""
-    fl, _ = files(s)
-    return {k: v for k, v in fl.items()
-            if (k.startswith("mods/") and v.endswith(".disabled")) or not (k.startswith("mods/") or k.startswith("kubejs/"))}
-
-
-async def set_sync(sid: str, on: bool) -> str:
-    """Add or remove AutoModpack on the server. Returns a note for the page."""
-    s = state.get(sid)
-    if on:
-        if automodpack_jar(s) or any(m.get("slug") == "automodpack" for m in s.get("managed_mods", [])):
-            set_settings(sid, sync=True)
-            return "AutoModpack is already on this server."
-        r = await servers.install_mod(s, "automodpack")
-        set_settings(sid, sync=True)
-        state.update(sid, restart_pending=True)
-        return f"Added AutoModpack {r.get('version', '')}. Restart the server to turn it on."
-    for m in s.get("managed_mods", []):
-        if m.get("slug") == "automodpack":
-            servers.remove_managed_mod(sid, m["project_id"])
-    jar = automodpack_jar(s)
-    if jar:
-        os.remove(jar)
-    set_settings(sid, sync=False)
-    state.update(sid, restart_pending=True)
-    return "Removed AutoModpack. Restart the server to finish."
-
-
-async def repin(s: dict) -> None:
-    """Earlier SpawnPoint versions could pin a test build of AutoModpack (5.0 release
-    candidates fail to start on some servers). Switch it to the newest stable one."""
-    if not settings(s).get("sync"):
-        return
-    m = next((m for m in s.get("managed_mods", []) if m.get("slug") == "automodpack"), None)
-    if not m and automodpack_jar(s):                           # added straight to the mods folder
-        f = os.path.basename(automodpack_jar(s))
-        m = {"filename": f, "version": f}
-    if m and re.search(r"(?i)(rc|beta|alpha|pre)", m.get("version", "")):
-        try:
-            r = await servers.install_mod(state.get(s["id"]), "automodpack")
-            old = os.path.join(servers.mods_dir(s), m.get("filename", ""))
-            if m.get("filename") and m["filename"] != r.get("filename") and os.path.isfile(old):
-                os.remove(old)                                 # or two copies would clash
-            log.info("[%s] AutoModpack %s -> %s", s["id"], m.get("version"), r.get("version"))
-        except Exception as e:
-            log.warning("[%s] couldn't switch AutoModpack to a stable version: %s", s["id"], e)
-
-
-def before_boot(s: dict) -> None:
-    """Called before each start: keep AutoModpack's settings and extra files current."""
-    if not settings(s).get("sync"):
-        return
-    base = dockerctl.server_dir(s["id"])
-    own_like(os.path.join(base, "automodpack"), base)          # repairs a folder an earlier version made
-    try:
-        configure_automodpack(base, bool(s.get("real_ip")), page_url(s), client_only_extras(s))
-    except Exception as e:
-        log.warning("[%s] couldn't set up AutoModpack: %s", s["id"], e)
 
 
 def page_url(s: dict) -> str:
@@ -604,11 +459,6 @@ async def mrpack(s: dict) -> str:
     Modrinth download (so they come from Modrinth); everything else is inside it."""
     import asyncio
     _, _, fl, _ = await asyncio.to_thread(index, s)
-    if await asyncio.to_thread(sync_active, s):
-        # Just AutoModpack: the Modrinth App sets up the right Minecraft and loader, and
-        # AutoModpack brings everything else on the first join.
-        amp = automodpack_jar(s)
-        fl = {f"mods/{os.path.basename(amp)}": amp}
     mods = {k: v for k, v in fl.items() if k.startswith("mods/")}
     sha1s = {k: await asyncio.to_thread(_sha1, v) for k, v in mods.items()}
     found = await modrinth_lookup(sorted(set(sha1s.values())))

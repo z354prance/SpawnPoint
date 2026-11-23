@@ -374,9 +374,8 @@ async def _boot(s: dict, burst: bool = False) -> None:
     if not s.get("first_boot"):
         await asyncio.to_thread(ensure_rcon, s)
         from . import playerpack
-        await playerpack.repin(s)
+        await asyncio.to_thread(playerpack.before_boot, s)     # removes AutoModpack left by older versions
         s = state.get(s["id"])
-        await asyncio.to_thread(playerpack.before_boot, s)
         await asyncio.to_thread(apply_empty_pause, s)
         # Container is stopped here, so it's safe to (re)apply the real-IP setup.
         from . import packs
@@ -602,6 +601,8 @@ async def start(sid: str) -> dict:
         # Its first install never finished (e.g. a crash): run the whole install again.
         spawn(sid, provision(sid))
         return s
+    await asyncio.to_thread(pregen.unskip, sid)
+    s = state.get(sid)
     resume = s["pregen"]["stage"] in ("spawn", "background", "pending")
     set_phase(sid, "starting", "")
 

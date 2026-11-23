@@ -305,12 +305,6 @@ async def run(sid: str, fresh: bool) -> None:
         # as people explore, which vanilla handles easily.
         p.update(stage="done", spawn_only=True, paused=False, held=False)
         state.save()
-    if p["stage"] == "skipped" and await asyncio.to_thread(servers.has_mod, s, "chunky"):
-        # An earlier start couldn't reach Chunky (the server was crashing) and gave up on
-        # pre-generation. Chunky is here, so pick it up again.
-        log.info("[%s] Chunky is installed: resuming pre-generation that was skipped", sid)
-        p.update(stage="background", method="chunky")
-        state.save()
     stage = p["stage"]
     if stage in ("done", "skipped"):
         if await servers.boot_ready(sid, config.INSTALL_TIMEOUT_S if s.get("pack_pending") else 600):
@@ -364,6 +358,19 @@ async def run(sid: str, fresh: bool) -> None:
     await background(sid, start_new=new_task or not state.get(sid)["pregen"].get("percent"))
 
 
+def unskip(sid: str) -> bool:
+    """An earlier start couldn't reach Chunky (the server was crashing) and gave up on
+    pre-generation. If Chunky is installed, pick it up again. True if it was changed."""
+    s = state.get(sid)
+    p = s["pregen"]
+    if p["stage"] == "skipped" and servers.has_mod(s, "chunky"):
+        log.info("[%s] Chunky is installed: resuming pre-generation that was skipped", sid)
+        p.update(stage="background", method="chunky")
+        state.save()
+        return True
+    return False
+
+
 async def background(sid: str, start_new: bool = False) -> None:
     s = state.get(sid)
     if s["pregen"].get("method") == "forceload":
@@ -374,8 +381,10 @@ async def background(sid: str, start_new: bool = False) -> None:
         if alloc.lend_burst(sid, config.BURST_GROUPS, config.MAX_BURST_SERVERS):
             await asyncio.to_thread(dockerctl.set_cpuset, sid, alloc.cpus_for(sid))
     done = await _generate(s, s["pregen"]["full_radius"], throttle=True, fresh_task=start_new)
-    if done is None:
+    if done is None and not await asyncio.to_thread(servers.has_mod, state.get(sid), "chunky"):
         _pg(sid, stage="skipped")
+    elif done is None:
+        log.info("[%s] Chunky didn't answer; pre-generation carries on at the next start", sid)
     if done is None or done:
         alloc.return_burst(sid)
         await _shrink(sid)  # give the borrowed cores back before reporting "done"

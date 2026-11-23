@@ -139,3 +139,20 @@ def test_watch_exit_ends_a_stuck_server(monkeypatch):
     servers._exit_watch["w"]["saved_at"] -= servers.EXIT_GRACE_S + 1
     servers.watch_exit("w")
     assert C.killed and state.get("w")["exit_hung"]
+
+
+
+def test_case_twin_quest_files(tmp_path, monkeypatch):
+    """FTB Quests loading a reward table twice (790a… and 790A… on Linux) crashes the server
+    with "already exists in the tab's list"; the explanation names the files."""
+    from app import crashinfo, dockerctl
+    monkeypatch.setattr(dockerctl, "server_dir", lambda sid: str(tmp_path))
+    d = tmp_path / "config" / "ftbquests" / "quests" / "reward_tables"
+    d.mkdir(parents=True)
+    (d / "790a03e65ce8ebe4.snbt").write_text("{}")
+    (d / "790A03E65CE8EBE4.snbt").write_text("{}")
+    log = ["java.lang.IllegalArgumentException: Itemstack 1 ftbquests:lootcrate already exists in the tab's list"]
+    ex = crashinfo.explain("x", log)
+    assert ex["title"] == "Two copies of the same file"
+    assert "790a03e65ce8ebe4.snbt" in ex["detail"] and "790A03E65CE8EBE4.snbt" in ex["detail"]
+    assert "ftbquests:lootcrate" in ex["detail"]
