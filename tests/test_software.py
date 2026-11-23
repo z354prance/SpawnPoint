@@ -156,3 +156,33 @@ def test_a_switch_cut_short_by_a_restart_is_reported(srv):
     software.recover()
     w = state.get("t")["software"]
     assert w["step"] == "failed" and "nothing was changed" in w["msg"] and state.get("t")["kind"] == "vanilla"
+
+
+def test_helpers_and_pre_gen_come_with_the_new_software(srv, monkeypatch):
+    """After vanilla -> Fabric there was no Chunky, so no pre-generation."""
+    d, _ = srv
+    installed = []
+
+    async def install(s, slug):
+        installed.append(slug)
+        state.update(s["id"], managed_mods=state.get(s["id"]).get("managed_mods", []) + [{"slug": slug, "version_id": "v"}])
+        return {"filename": f"{slug}.jar"}
+    monkeypatch.setattr(servers, "install_mod", install)
+    state.update("t", kind="fabric", loader="fabric", software_prev={"kind": "vanilla", "backup": "snap1"},
+                 pregen={"stage": "done", "method": "forceload", "spawn_only": True, "full_radius": 2500, "spawn_radius": 750})
+    asyncio.run(servers.ensure_helpers(state.get("t")))
+    s = state.get("t")
+    assert installed == servers.HELPERS["fabric"] and s["helpers_for"] == "fabric"
+    assert s["pregen"]["stage"] == "background" and s["pregen"]["method"] == "chunky" and not s["pregen"]["spawn_only"]
+    installed.clear()
+    asyncio.run(servers.ensure_helpers(state.get("t")))                         # once per software
+    assert installed == []
+
+
+def test_servers_never_switched_are_only_marked(srv, monkeypatch):
+    async def install(s, slug):
+        raise AssertionError("shouldn't add helpers back")
+    monkeypatch.setattr(servers, "install_mod", install)
+    state.update("t", kind="fabric", loader="fabric", pregen={"stage": "done"})
+    asyncio.run(servers.ensure_helpers(state.get("t")))
+    assert state.get("t")["helpers_for"] == "fabric"

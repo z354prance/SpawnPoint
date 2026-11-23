@@ -193,6 +193,39 @@ async def ensure_pack_helpers(s: dict) -> None:
                  helpers_added=sorted(set(st.get("helpers_added", []) + added)))
 
 
+async def ensure_helpers(s: dict) -> None:
+    """Helper mods/plugins for the software the server runs now. They're added when a
+    server is set up; after switching software (vanilla -> Fabric, say) the new one's
+    helpers were never added, so there was no Chunky and no pre-generation. Servers that
+    were never switched are just marked, so a helper someone removed doesn't come back."""
+    if is_managed(s):
+        return await ensure_pack_helpers(s)
+    sid, loader = s["id"], s.get("loader") or s.get("kind") or ""
+    if s.get("helpers_for") == loader:
+        return
+    if "helpers_for" not in s and not s.get("software_prev"):
+        state.update(sid, helpers_for=loader)
+        return
+    added = []
+    for slug in HELPERS.get(loader, []):
+        if has_mod(state.get(sid), slug):
+            continue
+        try:
+            added.append((await install_mod(state.get(sid), slug))["filename"])
+        except Exception as e:
+            log.info("[%s] skipped helper %s: %s", sid, slug, e)
+    st = state.get(sid)
+    p = dict(st.get("pregen") or {})
+    if p and has_mod(st, "chunky") and (p.get("stage") == "skipped" or
+                                        (p.get("stage") == "done" and (p.get("method") != "chunky" or p.get("spawn_only")))):
+        p.update(stage="background", method="chunky", spawn_only=False, percent=0, paused=False)   # now it can go out to the limit
+        log.info("[%s] Chunky is here now: pre-generating out to %s blocks", sid, p.get("full_radius"))
+    state.update(sid, helpers_for=loader, pregen=p or st.get("pregen"), mod_count=len(mod_files(st)),
+                 helpers_added=sorted(set(st.get("helpers_added", []) + added)))
+    if added:
+        log.info("[%s] added helpers for %s: %s", sid, loader, ", ".join(added))
+
+
 def set_phase(sid: str, phase: str, msg: str = "") -> None:
     before = (state.get(sid) or {}).get("phase")
     state.update(sid, phase=phase, phase_msg=msg, phase_at=time.time())
@@ -412,7 +445,7 @@ async def _boot(s: dict, burst: bool = False) -> None:
         s = await packs.pin_curseforge(s)
         s = await reconcile_install(s)
         s = refresh_memory_plan(s)
-        await ensure_pack_helpers(s)
+        await ensure_helpers(s)
         await realip.ensure(state.get(s["id"]))
         s = state.get(s["id"])
     from . import clientpack
@@ -609,7 +642,7 @@ async def prepare(s: dict) -> None:
     # 3. Paper: let chunk generation use more worker threads
     if loader in ("paper", "purpur"):
         tune_paper(sdir, worker_threads=4 + 4 * config.BURST_GROUPS)
-    state.update(sid, helpers_added=added, mod_count=len(mod_files(s)))
+    state.update(sid, helpers_added=added, mod_count=len(mod_files(s)), helpers_for=loader)
 
 
 def tune_paper(sdir: str, worker_threads: int) -> None:
@@ -634,6 +667,10 @@ async def start(sid: str) -> dict:
         # Its first install never finished (e.g. a crash): run the whole install again.
         spawn(sid, provision(sid))
         return s
+    try:
+        await ensure_helpers(state.get(sid))          # before deciding on pre-gen: a new Chunky turns it on
+    except Exception as e:
+        log.warning("[%s] helpers: %s", sid, e)
     await asyncio.to_thread(pregen.unskip, sid)
     s = state.get(sid)
     resume = s["pregen"]["stage"] in ("spawn", "background", "pending")
