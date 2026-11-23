@@ -1091,9 +1091,20 @@ function packCounts(p) {
   return `<p class="sub">${n(p.mods, "mod")} and ${n(p.count - p.mods, "other file")}, ${mbs(p.size)}.${p.left_out.length ? ` Left out: ${p.left_out.length}.` : ""}</p>
     ${p.left_out.length ? `<details><summary class="sub">What's left out, and why</summary><ul class="sub" style="margin:6px 0 0 18px">${p.left_out.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}`;
 }
+// Servers running a CurseForge/FTB/Modrinth pack hand out its official client version,
+// prepared on the server once per version.
+function officialNote(o) {
+  if (!o || o.state === "none") return "";
+  if (o.state === "ready") return `<p class="sub">Players get the modpack's official client version (its theming and client-side mods), plus mods you added in the Mods tab.${o.missing?.length ? ` ${o.missing.length} file(s) couldn't be downloaded.` : ""}</p>`;
+  if (o.state === "error") return `<p class="sub" style="color:var(--warn)">Couldn't prepare the modpack's player files: ${esc(o.error || "")}. It's tried again in a few minutes.</p>`;
+  return `<p class="sub">Getting the modpack's official player files ready on the server${o.total ? `: ${o.done} of ${o.total}` : "…"}. The downloads work once that's done.</p>`;
+}
 async function fillPackCounts(sid, el) {
   const d = await api(`/servers/${sid}/player-pack?details=true`).catch(() => null);
-  if (el?.isConnected && d?.mods !== undefined) el.innerHTML = packCounts(d);
+  if (!el?.isConnected || !d) return;
+  if (d.mods !== undefined) { el.innerHTML = officialNote(d.official) + packCounts(d); return; }
+  el.innerHTML = officialNote(d.official);
+  if (d.official && !["ready", "none"].includes(d.official.state)) setTimeout(() => fillPackCounts(sid, el), 5000);
 }
 
 async function drawPlayerPack(sid, p) {

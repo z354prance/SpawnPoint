@@ -157,8 +157,31 @@ def _has_secret_now(path: str) -> bool:
         return True
 
 
+class Preparing(Exception):
+    """The server's official client pack is still being prepared (or couldn't be)."""
+
+    def __init__(self, st: dict):
+        super().__init__(st.get("error") or "preparing")
+        self.status = st
+
+
 def files(s: dict) -> tuple[dict[str, str], list[str]]:
-    """{path in the pack: file on disk} and the paths left out (with why)."""
+    """{path in the pack: file on disk} and the paths left out (with why). Servers that run
+    a CurseForge, FTB or Modrinth pack hand out that pack's client version (with its
+    theming and client mods) plus mods added through the Mods tab; others the server's files."""
+    from . import clientpack
+    if clientpack.key(s):
+        st = clientpack.status(s)
+        if st["state"] != "ready":
+            raise Preparing(st)
+        fl = {rel: clientpack.file_path(s, rel) for rel in clientpack.manifest(s)}
+        fl.update(clientpack.extras(s))
+        return fl, [f"{m} (couldn't be downloaded)" for m in st.get("missing", [])]
+    return server_files(s)
+
+
+def server_files(s: dict) -> tuple[dict[str, str], list[str]]:
+    """The server's own files, for custom and imported servers."""
     base = dockerctl.server_dir(s["id"])
     out: dict[str, str] = {}
     left: list[str] = []

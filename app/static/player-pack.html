@@ -58,6 +58,7 @@
   <div class="facts" id="facts">Loading…</div>
   <div class="addr"><code id="addr">–</code><button class="btn quiet" id="copy">Copy address</button></div>
   <p class="pack" id="pack" hidden></p>
+  <p class="pack" id="prep" hidden style="color:var(--acc)"></p>
 
   <section class="main" aria-labelledby="apph">
     <h2 id="apph">Play with the SpawnPoint app</h2>
@@ -124,7 +125,14 @@ fetch(`${base}/info`).then((r) => r.ok ? r.json() : Promise.reject()).then((i) =
   $("copy").onclick = () => navigator.clipboard.writeText(i.address).then(() => { $("copy").textContent = "Copied"; setTimeout(() => ($("copy").textContent = "Copy address"), 1500); });
   if (i.pack?.title) {
     $("pack").hidden = false;
-    $("pack").textContent = `This server runs ${i.pack.title}${i.pack.version ? ` ${i.pack.version}` : ""}. Already have that exact version in a launcher? You can use it instead.`;
+    $("pack").textContent = `This server runs ${i.pack.title}${i.pack.version ? ` ${i.pack.version}` : ""}. Everything below gives you that pack's full version, plus anything the server added. Already have that exact version in a launcher? You can use it instead.`;
+  }
+  if (i.preparing) {
+    $("prep").hidden = false;
+    $("prep").textContent = i.preparing.state === "error"
+      ? "The server couldn't get the modpack's files ready. Ask the server's owner to check."
+      : `The server is getting the modpack's files ready${i.preparing.total ? ` (${i.preparing.done} of ${i.preparing.total})` : ""}. The downloads work in a few minutes; the app waits by itself.`;
+    setTimeout(() => location.reload(), 15000);
   }
 
   // Step 1: the app for this computer, the others as small links
@@ -141,7 +149,7 @@ fetch(`${base}/info`).then((r) => r.ok ? r.json() : Promise.reject()).then((i) =
 
   // Step 2: hand this page's link to the app
   $("addapp").href = `spawnpoint://add?link=${encodeURIComponent(i.page || location.origin + base)}`;
-  $("playnote").textContent = `The first time, the app downloads the mods (about ${Math.max(1, Math.round(i.size / 2 ** 20))} MB). `
+  $("playnote").textContent = (i.size ? `The first time, the app downloads the mods (about ${Math.max(1, Math.round(i.size / 2 ** 20))} MB). ` : "The first time, the app downloads the mods. ")
     + "After that it only fetches what changed, and joins the server for you.";
 
   $("prism").href = `${base}/prism.zip`;

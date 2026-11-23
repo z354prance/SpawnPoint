@@ -1568,6 +1568,20 @@ async def set_bedrock(sid: str, body: BedrockBody):
 
 
 # ------------------------------------------------------------------ player packs
+from .playerpack import Preparing as _Preparing
+
+
+@app.exception_handler(_Preparing)
+async def _preparing(request: Request, e: _Preparing):
+    st = e.status
+    if st.get("state") == "error":
+        msg = f"The server couldn't get this modpack's player files ready: {st.get('error', '')}"
+    else:
+        msg = (f"The server is still getting the modpack's player files ready ({st.get('done', 0)} of {st.get('total') or '…'}). "
+               "Try again in a few minutes.")
+    return JSONResponse({"detail": msg, "preparing": st}, status_code=409)
+
+
 class PlayerPackReq(BaseModel):
     enabled: bool | None = None
     new_link: bool = False
@@ -1575,14 +1589,18 @@ class PlayerPackReq(BaseModel):
 
 
 def _pack_view(sid: str, details: bool = True) -> dict:
-    from . import playerpack
+    from . import clientpack, playerpack
     s = _get(sid)
     pp = playerpack.settings(s)
     out = {"enabled": playerpack.enabled(s), "token": pp.get("token"),
            "base_url": pp.get("base_url", ""), "page": playerpack.page_url(s),
-           "modded": s.get("loader") not in ("vanilla", "paper", "purpur", None, "")}
+           "modded": s.get("loader") not in ("vanilla", "paper", "purpur", None, ""),
+           "official": clientpack.status(s)}
     if out["enabled"] and details:
-        fl, left = playerpack.files(s)
+        try:
+            fl, left = playerpack.files(s)
+        except playerpack.Preparing as e:
+            return {**out, "official": e.status}
         out.update(count=len(fl), mods=sum(1 for k in fl if k.startswith("mods/")), left_out=left[:200],
                    size=sum(os.path.getsize(v) for v in fl.values()))
     return out
@@ -1591,6 +1609,10 @@ def _pack_view(sid: str, details: bool = True) -> dict:
 @app.get("/api/servers/{sid}/player-pack", dependencies=viewer)
 async def player_pack_get(sid: str, details: bool = True):
     """details=false answers at once; the counts (which scan the pack) come separately."""
+    from . import clientpack, playerpack
+    s = _get(sid)
+    if playerpack.enabled(s) and clientpack.key(s):
+        clientpack.ensure(s)
     return await asyncio.to_thread(_pack_view, sid, details)
 
 
@@ -1628,12 +1650,21 @@ async def player_pack_info(token: str):
     from . import playerpack
     s = _pack_server(token)
     loader, lver = await asyncio.to_thread(playerpack.loader_info, s)
-    _, _, fl, _ = await asyncio.to_thread(playerpack.index, s)
+    from . import clientpack
+    if clientpack.key(s):
+        clientpack.ensure(s)
+    try:
+        _, _, fl, _ = await asyncio.to_thread(playerpack.index, s)
+    except playerpack.Preparing as e:
+        fl, preparing = {}, e.status
+    else:
+        preparing = None
     return {"name": s["name"], "address": s.get("hostname"), "mc_version": s.get("mc_version"), "loader": loader,
             "loader_version": lver, "mods": sum(1 for k in fl if k.startswith("mods/")),
             "size": sum(os.path.getsize(v) for v in fl.values()),
             "pack": {"title": (s.get("pack") or {}).get("title"), "version": (s.get("pack") or {}).get("version_name")} if s.get("pack") else None,
-            "online": s.get("phase") == "online", "page": playerpack.page_url(s), "app": await playerpack.app_downloads()}
+            "online": s.get("phase") == "online", "page": playerpack.page_url(s), "app": await playerpack.app_downloads(),
+            "official": bool(clientpack.key(s)), "preparing": preparing}
 
 
 @app.get("/p/{token}/pack/{path:path}")
@@ -1655,9 +1686,14 @@ async def player_pack_file(token: str, path: str):
 @app.get("/p/{token}/sync")
 async def player_pack_sync_index(token: str):
     """The pack's files and checksums, for the companion app to compare with what it has."""
-    from . import playerpack
+    from . import clientpack, playerpack
     s = _pack_server(token)
-    return {"files": await asyncio.to_thread(playerpack.sync_index, s)}
+    if clientpack.key(s):
+        clientpack.ensure(s)
+    try:
+        return {"files": await asyncio.to_thread(playerpack.sync_index, s)}
+    except playerpack.Preparing as e:
+        return JSONResponse({"preparing": e.status}, status_code=202)
 
 
 class SyncReq(BaseModel):

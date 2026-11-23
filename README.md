@@ -184,7 +184,12 @@ In a server's **Settings → Discord chat**:
 
 ## Player packs
 
-New modded servers and imports start with it on (the link uses the address you gave another server's pack, or the one you're using SpawnPoint at). For modded servers, **Settings → Player pack** makes a page where your players download what they need to join. It's built from the server's own files, so it always matches:
+New modded servers and imports start with it on (the link uses the address you gave another server's pack, or the one you're using SpawnPoint at). For modded servers, **Settings → Player pack** makes a page where your players download what they need to join. What's in it depends on how the server was made:
+
+- **From CurseForge, FTB or Modrinth:** the pack's **official client version**, the exact version the server runs, with its theming (title and loading screens, default resource packs) and client-side mods like minimaps, plus mods you added in the Mods tab. SpawnPoint prepares it once per pack version (a few minutes; the card shows progress), from the mods' usual download servers, and serves it from your server like everything else. CurseForge packs need the CurseForge API key.
+- **Custom and imported servers:** the server's own files, so it always matches.
+
+The downloads:
 
 - **The SpawnPoint app** (recommended): [SpawnPoint Launcher](https://github.com/z354prance/SpawnPoint-Launcher) for Windows, Mac and Linux. The page's **Add to the SpawnPoint app** button adds the server to it in one click (no link to paste); **Play** then fetches only the mods and settings that changed, in one download, and starts the game through a copy of Prism Launcher it manages itself. Set `LAUNCHER_REPO` if you publish your own builds.
 - **Prism Launcher instance**: drag it into [Prism](https://prismlauncher.org) and press Play. It has the right Minecraft and loader version and the server in the multiplayer list, and before every launch it runs [packwiz-installer](https://packwiz.infra.link/), which fetches only what changed from SpawnPoint. Add or update a mod on the server and players get it next time they play.
@@ -193,7 +198,7 @@ New modded servers and imports start with it on (the link uses the address you g
 
 The Modrinth file and the zip are the files as they are now, so players download them again after you change mods. Nothing is installed on the game server for any of this: SpawnPoint reads the server's files and serves them from the `/p/` link. (Earlier versions could add AutoModpack to the server; it's removed from servers that had it at their next start.)
 
-What's in it: the server's mods except ones only a server uses (Chunky, proxy and Discord mods, Fabric mods marked server-only), the client-only mods SpawnPoint turned off on the server, and `config`, `defaultconfigs`, `kubejs` (not its server scripts), resource packs and shader packs. Config files that look like they contain a password, token or webhook are left out, and the card lists everything left out and why. Players' own changes to config files are kept when the pack updates.
+For custom and imported servers, what's in it: the server's mods except ones only a server uses (Chunky, proxy and Discord mods, Fabric mods marked server-only), the client-only mods SpawnPoint turned off on the server, and `config`, `defaultconfigs`, `kubejs` (not its server scripts), resource packs and shader packs. Config files that look like they contain a password, token or webhook are left out, and the card lists everything left out and why. Players' own changes to config files are kept when the pack updates.
 
 The page is at `/p/<link>` on the address you enter in the card, which has to be reachable from the internet (a Pangolin HTTP resource for SpawnPoint, for example). Only that path works without signing in, and only files listed in the pack can be fetched from it. **New link** turns the old one off.
 
