@@ -203,7 +203,7 @@ async def ensure_helpers(s: dict) -> None:
     sid, loader = s["id"], s.get("loader") or s.get("kind") or ""
     if s.get("helpers_for") == loader:
         return
-    if "helpers_for" not in s and not s.get("software_prev"):
+    if "helpers_for" not in s and not s.get("software_prev"):      # never switched: leave its mods as they are
         state.update(sid, helpers_for=loader)
         return
     added = []

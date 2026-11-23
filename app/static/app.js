@@ -939,6 +939,7 @@ async function drawPlayerMods(sid, s, mod) {
   const r = await api(`/servers/${sid}/player-mods`).catch(() => null); if (!r || !$("#pmods")) return;
   box.innerHTML = `<h4 style="margin-top:0">For players only</h4>
     <p class="sub" style="margin-top:0">Mods that only run in players' games, like Voxy for a server with LOD Server Support. They go in the player pack, and the server never loads them. Mods they need come along.</p>
+    <p class="sub" style="margin-top:0">Only mods with a build for ${esc(LOADER[s.loader] || s.loader)} ${esc(s.mc_version)} are shown. Mods that are on the server and players need too are in the pack already.</p>
     <div class="list" id="pmlist">${r.mods.map((m) => `<div class="item"><div class="grow"><div class="t">${esc(m.title)}</div>
       <div class="d mono">${esc(m.file)}${m.for ? ` · needed by ${esc(m.for)}` : ""}</div></div>
       ${mod ? `<button class="danger small" data-pmr="${esc(m.file)}" data-pmt="${esc(m.title)}">Remove</button>` : ""}</div>`).join("") || `<div class="sub">None yet.</div>`}</div>
@@ -961,7 +962,8 @@ async function drawPlayerMods(sid, s, mod) {
       b.disabled = true; b.textContent = "Adding…";
       const x = await act(() => api(`/servers/${sid}/player-mods`, { method: "POST", body: { project: res[b.dataset.pi].id } }));
       if (!x) { b.disabled = false; b.textContent = "Add for players"; return; }
-      toast(`Added to the player pack: ${x.added.map((a) => a.title).join(", ") || "already there"}.${x.missing.length ? ` Not available for this version: ${x.missing.join(", ")}.` : ""}`, !!x.missing.length);
+      toast(x.already ? `${x.already} is already on the server, so players get it with the rest of the pack.`
+        : `Added to the player pack: ${x.added.map((a) => a.title).join(", ")}.${x.missing.length ? ` Not available for this version: ${x.missing.join(", ")}.` : ""}`, !!x.missing.length);
       drawPlayerMods(sid, s, mod);
     }));
   };

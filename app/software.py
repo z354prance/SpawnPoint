@@ -124,6 +124,7 @@ async def _run(sid: str, target: str, channel: str | None) -> None:
         prev.update(backup=snap.get("id"), at=time.time(), name=NAMES.get(old, old))
         await asyncio.to_thread(_clear_launcher, sid, old)
         changes = {"kind": target, "loader": target, "loader_version": None, "software_prev": prev, "mod_updates": None,
+                   "helpers_for": None,                    # the next start adds the new software's helpers
                    "paper_channel": channel if target == "paper" else None}
         if target == "vanilla":
             changes["managed_mods"] = []           # vanilla has no mod loader to install them for
@@ -149,7 +150,7 @@ async def undo(sid: str) -> dict:
         await servers.stop(sid)
     await asyncio.to_thread(_clear_launcher, sid, current(s))
     await backups.restore(sid, prev["backup"])
-    state.update(sid, software_prev=None, software=None, mod_updates=None,
+    state.update(sid, software_prev=None, software=None, mod_updates=None, helpers_for=None,
                  **{k: prev.get(k) for k in ("kind", "loader", "loader_version", "paper_channel", "managed_mods")})
     if was_running:
         await servers.start(sid)
@@ -160,6 +161,10 @@ def recover() -> None:
     """After SpawnPoint restarts: a switch cut short is reported. The type is only changed
     in the last step, together with "done", so a cut-short switch changed nothing."""
     for sid, s in list(state.servers().items()):
+        if s.get("software_prev") and s.get("helpers_for") and not s.get("helpers_rechecked"):
+            # before this fix, undoing or switching again kept the "helpers added" mark, so
+            # Chunky and the rest weren't added back: look again once at the next start
+            state.update(sid, helpers_for=None, helpers_rechecked=True)
         w = s.get("software") or {}
         if w.get("step") in ("backup", "switch"):
             w = {**w, "step": "failed", "msg": f"SpawnPoint restarted before the switch to {NAMES.get(w.get('target'), w.get('target'))} "

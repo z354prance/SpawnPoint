@@ -139,12 +139,16 @@ async def add(sid: str, project: str) -> dict:
                 if dep.get("dependency_type") == "required" and dep.get("project_id"):
                     await one(dep["project_id"], depth + 1, title)
 
+        if project in have:
+            pr = await c.get(f"{catalog.MR}/project/{project}")
+            title = (pr.json() if pr.status_code == 200 else {}).get("title") or project
+            return {"added": [], "missing": [], "already": title}
         await one(project, 0, "")
     cur = [m for m in state.get(sid).get("player_mods", []) if m["file"] not in {a["file"] for a in added}]
     state.update(sid, player_mods=cur + added)
     from . import files as fm
     fm.own_like(d, dockerctl.server_dir(sid))
-    return {"added": [{"file": a["file"], "title": a["title"], "for": a["for"]} for a in added], "missing": missing}
+    return {"added": [{"file": a["file"], "title": a["title"], "for": a["for"]} for a in added], "missing": missing, "already": ""}
 
 
 def remove(sid: str, file: str) -> None:

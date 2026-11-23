@@ -87,3 +87,9 @@ def test_no_build_for_this_version(srv):
 def test_search_asks_for_client_mods(srv):
     hits = asyncio.run(playermods.search(state.get("t"), "voxy"))
     assert hits[0]["title"] == "Voxy"
+
+
+def test_a_mod_the_server_already_has(srv):
+    state.update("t", managed_mods=[{"slug": "voxygen", "project_id": "voxygen", "filename": "voxygen.jar"}])
+    r = asyncio.run(playermods.add("t", "voxygen"))
+    assert r["added"] == [] and r["already"] == "Voxygen"

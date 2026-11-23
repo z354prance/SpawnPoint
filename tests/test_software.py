@@ -186,3 +186,37 @@ def test_servers_never_switched_are_only_marked(srv, monkeypatch):
     state.update("t", kind="fabric", loader="fabric", pregen={"stage": "done"})
     asyncio.run(servers.ensure_helpers(state.get("t")))
     assert state.get("t")["helpers_for"] == "fabric"
+
+
+def test_helpers_come_back_after_undo_and_switching_again(srv, monkeypatch):
+    d, calls = srv
+    installed = []
+
+    async def install(s, slug):
+        installed.append(slug)
+        return {"filename": f"{slug}.jar"}
+    monkeypatch.setattr(servers, "install_mod", install)
+    monkeypatch.setattr(servers, "has_mod", lambda s, slug, pack_ids=None: False)
+
+    async def switch():
+        await software.switch("t", "fabric")
+        await software._tasks["t"]
+    asyncio.run(switch())
+    assert state.get("t")["helpers_for"] is None
+    asyncio.run(servers.ensure_helpers(state.get("t")))
+    assert state.get("t")["helpers_for"] == "fabric" and installed
+    asyncio.run(software.undo("t"))
+    assert state.get("t")["helpers_for"] is None
+    installed.clear()
+    asyncio.run(switch())
+    asyncio.run(servers.ensure_helpers(state.get("t")))
+    assert installed == servers.HELPERS["fabric"]
+
+
+def test_servers_left_with_the_old_mark_are_looked_at_again_once(srv):
+    state.update("t", kind="fabric", loader="fabric", helpers_for="fabric", software_prev={"kind": "vanilla", "backup": "s"})
+    software.recover()
+    assert state.get("t")["helpers_for"] is None and state.get("t")["helpers_rechecked"]
+    state.update("t", helpers_for="fabric")
+    software.recover()
+    assert state.get("t")["helpers_for"] == "fabric"                            # only once
