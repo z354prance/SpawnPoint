@@ -281,3 +281,22 @@ def test_loader_version_from_libraries(tmp_path, monkeypatch):
     assert playerpack.loader_info(state.get("a")) == ("neoforge", "21.1.209")
     state.update("a", loader_version="1.21.1")                  # the wrong value an earlier version could store
     assert playerpack.loader_info(state.get("a")) == ("neoforge", "21.1.209")
+
+
+def test_on_by_default_for_new_modded_servers(tmp_path, monkeypatch):
+    state.put({"id": "m", "name": "M", "kind": "ftb", "created": 1})
+    state.put({"id": "v", "name": "V", "kind": "vanilla", "created": 2})
+    playerpack.turn_on_for_new("m", "http://192.168.1.5:8090")     # a local address players couldn't reach
+    pp = state.get("m")["player_pack"]
+    assert pp["enabled"] and len(pp["token"]) >= 12 and pp["base_url"] == ""
+    playerpack.turn_on_for_new("v", "https://sp.example.com")
+    assert "player_pack" not in state.get("v")                      # plain servers have no mods to hand out
+    state.update("m", player_pack={**pp, "base_url": "https://sp.example.com"})
+    state.put({"id": "n", "name": "N", "kind": "neoforge", "created": 3})
+    playerpack.turn_on_for_new("n", "http://10.0.0.2:8090")
+    assert state.get("n")["player_pack"]["base_url"] == "https://sp.example.com"   # reuses the known address
+    state.put({"id": "o", "name": "O", "kind": "modrinth", "created": 4})
+    state.update("m", player_pack={})
+    state.update("n", player_pack={})
+    playerpack.turn_on_for_new("o", "https://spawnpoint.example.org")
+    assert state.get("o")["player_pack"]["base_url"] == "https://spawnpoint.example.org"

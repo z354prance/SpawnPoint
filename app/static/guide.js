@@ -54,7 +54,7 @@ window.GUIDE = [
     <p>Generating new land is the heaviest thing a Minecraft server does, and it's what causes lag when players explore. SpawnPoint generates the world ahead of time instead:</p>
     <ul>
       <li>First the <b>area around spawn</b>, before the server opens, using extra CPU cores.</li>
-      <li>Then the <b>wider world</b> (out to 5,000 blocks by default) in the background while people play. It pauses by itself whenever the server starts to lag, and carries on when it's smooth again.</li>
+      <li>Then the <b>wider world</b> (out to 2,500 blocks by default) in the background while people play. It pauses by itself whenever the server starts to lag, and carries on when it's smooth again.</li>
       <li><b>Pause pre-gen</b> on the map card stops it until you resume it. In Settings you can also make it wait whenever anyone is online.</li>
       <li>Most servers use the Chunky mod for this. Vanilla servers (and modpacks without Chunky) use Minecraft's own method for the spawn area only; further out, the world generates as people explore. Versions older than 1.14 without Chunky can't pre-generate.</li>
     </ul>` },

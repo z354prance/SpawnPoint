@@ -481,6 +481,9 @@ async def create_server(req: CreateReq, request: Request):
         s = await servers.create(req.model_dump())
     except Exception as e:
         raise HTTPException(502, str(e))
+    from . import playerpack
+    playerpack.turn_on_for_new(s["id"], _origin(request))
+    s = state.get(s["id"])
     request.state.target = s["id"]
     request.state.detail = f"{req.kind} {req.project or req.mc_version or ''}".strip()
     return _public(s)
@@ -530,7 +533,16 @@ async def import_server(request: Request, name: str = "", filename: str = "", ki
         raise HTTPException(400, "The upload was empty.")
     s = await importer.start_import(path, name or re.sub(r"\.(zip|tar\.gz|tgz|tar)$", "", filename, flags=re.I),
                                     kind, mc_version)
-    return _public(s)
+    from . import playerpack
+    playerpack.turn_on_for_new(s["id"], _origin(request))
+    return _public(state.get(s["id"]))
+
+
+def _origin(request: Request) -> str:
+    """The address this page is being used at, as the browser sees it (behind a proxy too)."""
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", "")).split(",")[0].strip()
+    return f"{proto}://{host}" if host else ""
 
 
 @app.get("/api/servers/{sid}", dependencies=viewer)

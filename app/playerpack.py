@@ -76,6 +76,23 @@ def set_settings(sid: str, on: bool | None = None, new_link: bool = False, sync:
     return cur
 
 
+PLAIN = ("vanilla", "paper", "purpur")
+
+
+def turn_on_for_new(sid: str, origin: str = "") -> None:
+    """New modded servers (and imports) get a player pack straight away. The link uses
+    the address already given for another server's pack, or else the one SpawnPoint is
+    being used at, unless that's a local address players couldn't reach."""
+    s = state.get(sid)
+    if s.get("kind") in PLAIN or s.get("player_pack"):
+        return
+    base = next((pp["base_url"] for o in sorted(state.servers().values(), key=lambda o: -o.get("created", 0))
+                 if (pp := o.get("player_pack") or {}).get("base_url")), "")
+    if not base and origin and not re.match(r"^https?://(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[|[^/]*\.local\b|\d+\.\d+\.\d+\.\d+)", origin):
+        base = origin.rstrip("/")
+    state.update(sid, player_pack={"enabled": True, "token": secrets.token_urlsafe(12), "base_url": base})
+
+
 def by_token(token: str) -> dict | None:
     import hmac
     if not re.fullmatch(r"[A-Za-z0-9_-]{8,40}", token or ""):

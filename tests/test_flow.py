@@ -78,7 +78,7 @@ def test_full_flow(tmp_path, monkeypatch):
     assert boots[1] == ("boot", 16, False)        # pregen boot: own group + 3 borrowed
     assert cpusets[-1] == 4                       # borrowed cores returned
     cmds = [e[1] for e in events if e[0] == "rcon"]
-    assert "chunky radius 750" in cmds and "chunky radius 5000" in cmds
+    assert "chunky radius 750" in cmds and "chunky radius 2500" in cmds
     assert "chunky pause" in cmds and "chunky continue" in cmds   # throttled on high mspt
     assert s["helpers_added"] == ["chunky.jar", "spark.jar"]
     assert "worker-threads: 16" in (tmp_path / "survival/config/paper-global.yml").read_text()

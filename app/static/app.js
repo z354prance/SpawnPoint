@@ -337,7 +337,7 @@ function drawServer() {
 
 function drawDetails(s) {
   const st = s.stats || {}, on = running(s), lists = LISTS[s.id], bk = BK[s.id];
-  const pp = s.player_pack?.enabled && s.player_pack?.token
+  const pp = s.player_pack?.enabled && s.player_pack?.token && !["vanilla", "paper", "purpur"].includes(s.loader || s.kind)
     ? `<button class="small" id="ppopen" title="Copy or open the link players download the mods from">${ICON.link}Player pack</button>` : "";
   const acts = pp + (!can("moderator") ? "" : on
     ? `<button class="ic" data-a="restart" aria-label="Restart" title="Restart">${ICON.restart}</button>
@@ -373,7 +373,7 @@ function drawDetails(s) {
 // How far the world is generated. Chunky fills a square centred on the world spawn, so the
 // generated area is a square whose half-width grows with the square root of the progress.
 function genState(s) {
-  const p = s.pregen || {}, R = p.full_radius || 5000, sR = p.spawn_radius || 750, pct = (p.percent || 0) / 100;
+  const p = s.pregen || {}, R = p.full_radius || 2500, sR = p.spawn_radius || 750, pct = (p.percent || 0) / 100;
   let r = 0, label;
   if (p.stage === "spawn") { r = sR * Math.sqrt(pct); label = `Generating the spawn area: ${(pct * 100).toFixed(0)}% of ${sR.toLocaleString()} blocks`; }
   else if (p.stage === "background") { r = Math.max(sR, R * Math.sqrt(pct)); label = `${(pct * 100).toFixed(0)}% of ${R.toLocaleString()} blocks${s.phase !== "online" ? "" : p.paused ? (p.paused_for === "hand" ? ", paused by hand: press Resume pre-gen to carry on" : p.paused_for === "players" ? ", waiting until nobody is playing" : p.paused_for === "disk" ? ", paused: the disk is nearly full" : ", paused while the server is busy") : s.burst ? ", using spare cores" : ""}`; }
