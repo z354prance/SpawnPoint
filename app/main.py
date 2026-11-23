@@ -107,6 +107,8 @@ async def lifespan(app: FastAPI):
     from . import modupdates
     from . import chatbridge, upgrades
     await asyncio.to_thread(upgrades.recover)
+    from . import software
+    await asyncio.to_thread(software.recover)
     from . import files as _files
     await asyncio.to_thread(_files.purge_old)          # Recently deleted keeps things for 7 days
     extra = [asyncio.create_task(modupdates.loop()), asyncio.create_task(chatbridge.loop())]

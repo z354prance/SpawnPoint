@@ -154,3 +154,31 @@ def test_browse_and_restore_chosen_files(world):
         run(backups.restore_paths("aoc", snap, ["/../../etc/passwd"]))
     with pytest.raises(ValueError):
         run(backups.browse("aoc", "old.tar.gz", "/"))
+
+
+def test_freeing_space_doesnt_hold_up_the_backup(world, monkeypatch, tmp_path):
+    """The daily prune goes through every server's backups; an upgrade waiting on a backup
+    sat behind it for many minutes. Forgetting stays in line, pruning runs on its own."""
+    state.update("aoc", backup_keep={"last": 2})
+    monkeypatch.setattr(backups, "_prune_marker", lambda: str(tmp_path / "pruned"))
+    monkeypatch.setattr(backups, "_exists", lambda repo: True)
+    ran, release = [], None
+
+    async def fake_run(repo, *args, **kw):
+        ran.append(args[0])
+        if args[0] == "prune":
+            await release.wait()
+        return ""
+    monkeypatch.setattr(backups, "_run", fake_run)
+
+    async def go():
+        nonlocal release
+        release = asyncio.Event()
+        await asyncio.wait_for(backups.apply_retention("aoc"), 2)     # returns with the prune still going
+        await asyncio.sleep(0)
+        assert "forget" in ran and "prune" in ran and not os.path.exists(tmp_path / "pruned")
+        assert all("--prune" not in a for a in ran)
+        release.set()
+        await backups._prune_task
+        assert os.path.exists(tmp_path / "pruned")
+    asyncio.run(go())

@@ -976,6 +976,14 @@ async function tabPlayers(sid, s) {
 
 // Minecraft version upgrades for plain servers: a trial copy on the new version first.
 const UPSTEP = { backup: "Backing up", copy: "Copying the server", mods: "Updating the copy's mods", trial: "Trial run", switch: "Switching over" };
+// A bar for a multi-step job: the backup's real percentage while it backs up, a moving bar otherwise.
+function jobBar(s, backingUp) {
+  const b = s.backup || {};
+  if (backingUp && b.status === "running" && b.percent != null)
+    return `<div class="row sub" style="justify-content:space-between;margin:6px 0 4px"><span>Backing up</span><span>${Math.round(b.percent)}%</span></div>
+      <div class="bar" role="progressbar" aria-label="Backing up" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(b.percent)}"><i class="live" style="width:${Math.max(2, b.percent)}%"></i></div>`;
+  return `<div class="bar indet" role="progressbar" aria-label="Working" style="margin:6px 0 4px"><i></i></div>`;
+}
 // ---- switching between vanilla, Fabric, Paper and Purpur (app/software.py)
 const SW_FROM = ["vanilla", "fabric", "quilt", "paper", "purpur"];
 const SW_ABOUT = {
@@ -990,7 +998,7 @@ async function drawSoftwareCard(sid) {
   const w = s.software, prev = s.software_prev, busy = w && ["backup", "switch"].includes(w.step), cur = LOADER[s.kind] || s.kind;
   let status = "";
   if (busy) {
-    status = `<p>${esc(w.msg || "")}…</p><ol class="steps"><li class="${w.step === "backup" ? "now" : "done"}">Back up</li><li class="${w.step === "switch" ? "now" : ""}">Switch and restart</li></ol>`;
+    status = `<p>${esc(w.msg || "")}…</p>${jobBar(s, w.step === "backup")}<ol class="steps"><li class="${w.step === "backup" ? "now" : "done"}">Back up</li><li class="${w.step === "switch" ? "now" : ""}">Switch and restart</li></ol>`;
     setTimeout(async () => { if ($("#swcard") && TAB === "settings" && SEL === sid) { await refreshList(); drawSoftwareCard(sid); } }, 3000);
   } else if (w?.step === "failed") {
     status = `<div class="crashcard"><b>${esc(w.msg)}</b><div class="row" style="justify-content:flex-end"><button class="small" id="swok">OK</button></div></div>`;
@@ -1045,7 +1053,7 @@ async function drawUpgradeCard(sid) {
   let body = "";
   if (busy) {
     const steps = Object.keys(UPSTEP), i = steps.indexOf(u.step);
-    body = `<p>${esc(u.msg || "")}</p><ol class="steps">${steps.map((k, j) => `<li class="${j < i ? "done" : j === i ? "now" : ""}">${UPSTEP[k]}</li>`).join("")}</ol>
+    body = `<p>${esc(u.msg || "")}</p>${jobBar(s, u.step === "backup")}<ol class="steps">${steps.map((k, j) => `<li class="${j < i ? "done" : j === i ? "now" : ""}">${UPSTEP[k]}</li>`).join("")}</ol>
       <p class="sub">The server keeps running until the trial copy has started on ${esc(u.target)}; only then is it stopped and switched.</p>`;
     setTimeout(async () => { if ($("#upcard") && TAB === "settings" && SEL === sid) { await refreshList(); drawUpgradeCard(sid); } }, 4000);
   } else if (u?.step === "failed") {

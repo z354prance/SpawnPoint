@@ -203,19 +203,34 @@ async def apply_retention(sid: str) -> None:
     except OSError:
         last = 0
     prune = time.time() - last > PRUNE_EVERY_S
+    repos = [r for r in [shared_repo()] + ([old_repo(sid)] if _exists(old_repo(sid)) else []) if _exists(r)]
     async with _shared_lock:
-        for repo in [shared_repo()] + ([old_repo(sid)] if _exists(old_repo(sid)) else []):
-            if not _exists(repo):
-                continue
+        for repo in repos:
             try:
-                await _run(repo, "forget", "--host", sid, "--tag", "spawnpoint", "--group-by", "host", *keep,
-                           *(["--prune"] if prune else []), low=True)
+                await _run(repo, "forget", "--host", sid, "--tag", "spawnpoint", "--group-by", "host", *keep, low=True)
             except BackupError as e:
                 log.warning("[%s] retention: %s", sid, e)
                 return
-        if prune:
-            with open(_prune_marker(), "w"):
-                pass
+    # Freeing the space goes through every server's backups and can take many minutes on
+    # a big store: it runs on its own, so the backup (and an upgrade waiting on it) is done.
+    global _prune_task
+    if prune and (_prune_task is None or _prune_task.done()):
+        _prune_task = asyncio.create_task(_prune(repos))
+
+
+_prune_task: asyncio.Task | None = None
+
+
+async def _prune(repos: list[str]) -> None:
+    async with _shared_lock:
+        for repo in repos:
+            try:
+                await _run(repo, "prune", low=True)
+            except BackupError as e:
+                log.warning("freeing backup space: %s", e)
+                return
+        with open(_prune_marker(), "w"):
+            pass
 
 
 async def snapshots(sid: str) -> list[dict]:

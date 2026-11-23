@@ -154,3 +154,14 @@ async def undo(sid: str) -> dict:
     if was_running:
         await servers.start(sid)
     return {"restarted": was_running, "name": prev.get("name")}
+
+
+def recover() -> None:
+    """After SpawnPoint restarts: a switch cut short is reported. The type is only changed
+    in the last step, together with "done", so a cut-short switch changed nothing."""
+    for sid, s in list(state.servers().items()):
+        w = s.get("software") or {}
+        if w.get("step") in ("backup", "switch"):
+            w = {**w, "step": "failed", "msg": f"SpawnPoint restarted before the switch to {NAMES.get(w.get('target'), w.get('target'))} "
+                                              "finished, so nothing was changed. You can start it again."}
+            state.update(sid, software=w)

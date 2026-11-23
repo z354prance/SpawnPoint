@@ -149,3 +149,10 @@ def test_purpur_isnt_turned_back_into_paper_at_start(srv, monkeypatch):
     monkeypatch.setattr(servers, "pack_mod_ids", lambda s: set())
     s = asyncio.run(servers.reconcile_install(state.get("t")))
     assert s["loader"] == "purpur"
+
+
+def test_a_switch_cut_short_by_a_restart_is_reported(srv):
+    state.update("t", software={"step": "backup", "target": "fabric", "from": "vanilla", "at": 1})
+    software.recover()
+    w = state.get("t")["software"]
+    assert w["step"] == "failed" and "nothing was changed" in w["msg"] and state.get("t")["kind"] == "vanilla"
