@@ -178,6 +178,23 @@ def explain(sid: str, log_lines: list[str], since: float | None = None, mods_dir
         return done("A mod needs a newer Java", f"Something on this server was built for Java {java}." if java else
                     "Something on this server was built for a newer Java than the server is using.", "",
                     "SpawnPoint switches Java by itself when it can; if it couldn't, the mod may not support this Minecraft version.")
+    if "Failed to load datapacks" in log or "Failed to load registries due to errors" in log:
+        # A data pack (or a mod's built-in one) uses something from a mod that isn't installed:
+        # "Unknown registry key in ResourceKey[minecraft:root / ...]: lithostitched:fast_noise"
+        missing = list(dict.fromkeys(re.findall(r"Unknown registry key in ResourceKey\[[^\]]*\]: ([a-z0-9_.-]+):", log)))
+        missing = [m for m in missing if m not in ("minecraft", "c", "fabric", "neoforge", "forge")]
+        packs = list(dict.fromkeys(re.findall(r"Failed to parse \S+ from pack (\S+)", log)))
+        by = f"The {', '.join(packs[:3])} data pack" if packs else "A data pack"
+        if missing:
+            names = ", ".join(missing[:3])
+            return done("A data pack needs a mod that isn't installed",
+                        f"{by} uses parts of {names}, which isn't installed, so the game can't load the world's data packs.",
+                        "", f"Add {names} in the Mods tab (search for it by name), or remove the data pack that needs it.")
+        first = re.search(r"Failed to parse (\S+) from pack (\S+)", log)
+        return done("A data pack couldn't be loaded",
+                    (f"{first.group(1)} in the {first.group(2)} data pack has an error." if first else
+                     "The world's data packs have errors, so the game can't load them."), "",
+                    "Update or remove that data pack (or the mod it comes with). The console has the full error.")
     if "FAILED TO BIND TO PORT" in log.upper():
         return done("Another program is using the server's port", "The game couldn't open its port.", "",
                     "This shouldn't happen inside SpawnPoint; restart SpawnPoint's container.")

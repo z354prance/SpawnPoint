@@ -110,3 +110,23 @@ def test_fabric_26_isnt_recorded_as_its_loader_version(tmp_path, monkeypatch):
                "memory": {"max_gb": 4, "init_gb": 2}})
     s = asyncio.run(servers.reconcile_install(state.get("t")))
     assert s["mc_version"] == "26.3"
+
+
+def test_server_folder_is_given_to_the_games_user(tmp_path, monkeypatch):
+    """Files SpawnPoint or an import wrote were root's; Lithostitched couldn't create its config."""
+    d = tmp_path / "g"
+    (d / "config").mkdir(parents=True)
+    (d / "config" / "voxy.json").write_text("{}")
+    (d / "world" / "region").mkdir(parents=True)
+    (d / "world" / "region" / "r.0.0.mca").write_bytes(b"x")
+    monkeypatch.setattr(dockerctl, "server_dir", lambda sid: str(d))
+    state.put({"id": "g", "name": "g", "kind": "fabric", "extra_env": {}})
+    seen = {}
+    monkeypatch.setattr(servers.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(servers.os, "lchown", lambda p, u, g: seen.__setitem__(os.path.relpath(p, d), (u, g)))
+    n = servers.give_to_game("g")
+    assert n == len(seen) and seen["config"] == (1000, 1000) and seen["config/voxy.json"] == (1000, 1000)
+    assert "world/region/r.0.0.mca" in seen
+    state.update("g", extra_env={"UID": "99", "GID": "100"})                # an image set to Unraid's nobody:users
+    seen.clear(); servers.give_to_game("g")
+    assert set(seen.values()) == {(99, 100)}

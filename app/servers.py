@@ -365,6 +365,35 @@ def chunky_no_autoresume(sid: str) -> None:
             pass
 
 
+def give_to_game(sid: str) -> int:
+    """Everything in the server folder belongs to the user the game runs as (the image's
+    UID/GID, 1000 by default). Files SpawnPoint or an import wrote are root's, and the image
+    only fixes ownership when the folder itself is wrong, so a mod couldn't create its config
+    ("AccessDeniedException: ./config/lithostitched.json"). Returns how many were fixed."""
+    if os.geteuid() != 0:
+        return 0
+    s = state.get(sid)
+    env = s.get("extra_env") or {}
+    try:
+        uid, gid = int(env.get("UID", 1000)), int(env.get("GID", 1000))
+    except ValueError:
+        return 0
+    fixed = 0
+    for dirpath, dirnames, filenames in os.walk(dockerctl.server_dir(sid)):
+        links = [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]   # walk doesn't enter these
+        for n in [dirpath] + [os.path.join(dirpath, f) for f in filenames + links]:
+            try:
+                st = os.lstat(n)
+                if st.st_uid != uid or st.st_gid != gid:
+                    os.lchown(n, uid, gid)
+                    fixed += 1
+            except OSError:
+                pass
+    if fixed:
+        log.info("[%s] gave %d files back to the game's user (%d:%d)", sid, fixed, uid, gid)
+    return fixed
+
+
 async def _boot(s: dict, burst: bool = False) -> None:
     """(Re)create and start the container on its home cores (+ burst cores if lent)."""
     from . import realip
@@ -388,6 +417,7 @@ async def _boot(s: dict, burst: bool = False) -> None:
         s = state.get(s["id"])
     from . import clientpack
     clientpack.prepare(state.get(s["id"]))                    # players' copy of a new pack version
+    await asyncio.to_thread(give_to_game, s["id"])          # mods must be able to write their configs
     alloc = topology.allocator()
     alloc.assign_home(s["id"], s["home_groups"])
     if burst:

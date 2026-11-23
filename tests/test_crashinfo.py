@@ -156,3 +156,21 @@ def test_case_twin_quest_files(tmp_path, monkeypatch):
     assert ex["title"] == "Two copies of the same file"
     assert "790a03e65ce8ebe4.snbt" in ex["detail"] and "790A03E65CE8EBE4.snbt" in ex["detail"]
     assert "ftbquests:lootcrate" in ex["detail"]
+
+
+def test_data_pack_needs_a_missing_mod(tmp_path, monkeypatch):
+    """Lithosphere without Lithostitched: the card blamed a harmless config warning
+    (Voxy's AccessDeniedException) instead of the missing mod."""
+    mods = _server(tmp_path, monkeypatch)
+    log = ["[02:39:41] [main/ERROR]: could not save config",
+           "java.nio.file.AccessDeniedException: ./config/voxyworldgenv3.json",
+           "[02:39:42] [Worker-Main-1/ERROR]: Registry loading errors:",
+           "java.lang.IllegalStateException: Failed to parse lithosphere:lakes_placement from pack mr_lithosphere",
+           'Caused by: java.lang.IllegalStateException: Failed to parse either. First: Not a number: {"type":"x"}; Second: Unknown '
+           "registry key in ResourceKey[minecraft:root / minecraft:worldgen/density_function_type]: lithostitched:fast_noise",
+           "Second: Unknown registry key in ResourceKey[minecraft:root / minecraft:worldgen/density_function_type]: lithostitched:sin",
+           "[02:39:42] [main/WARN]: Failed to load datapacks, can't proceed with server load. You can either fix your datapacks or reset to vanilla with --safeMode"]
+    ex = crashinfo.explain("s", log, mods_dir=mods)
+    assert ex["title"] == "A data pack needs a mod that isn't installed"
+    assert "mr_lithosphere" in ex["detail"] and "lithostitched" in ex["detail"] and "Voxy" not in ex["detail"]
+    assert ex["detail"].count("lithostitched") == 1 and "Add lithostitched" in ex["hint"]
