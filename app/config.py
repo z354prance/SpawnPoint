@@ -114,6 +114,8 @@ SYSFS_CPU = os.environ.get("SYSFS_CPU", "/sys/devices/system/cpu")
 # Pre-generation
 SPAWN_PREGEN_RADIUS = _int("SPAWN_PREGEN_RADIUS", 750)
 FULL_PREGEN_RADIUS = _int("FULL_PREGEN_RADIUS", 2500)
+# Where the companion app's releases are, for the download links on player pack pages
+LAUNCHER_REPO = os.environ.get("LAUNCHER_REPO", "z354prance/SpawnPoint-Launcher")
 MSPT_PAUSE = _int("MSPT_PAUSE", 40)
 MSPT_RESUME = _int("MSPT_RESUME", 30)
 

@@ -1632,8 +1632,8 @@ async def player_pack_info(token: str):
     return {"name": s["name"], "address": s.get("hostname"), "mc_version": s.get("mc_version"), "loader": loader,
             "loader_version": lver, "mods": sum(1 for k in fl if k.startswith("mods/")),
             "size": sum(os.path.getsize(v) for v in fl.values()),
-            "pack": {"title": (s.get("pack") or {}).get("title"), "version": (s.get("pack") or {}).get("version")} if s.get("pack") else None,
-            "online": s.get("phase") == "online"}
+            "pack": {"title": (s.get("pack") or {}).get("title"), "version": (s.get("pack") or {}).get("version_name")} if s.get("pack") else None,
+            "online": s.get("phase") == "online", "page": playerpack.page_url(s), "app": await playerpack.app_downloads()}
 
 
 @app.get("/p/{token}/pack/{path:path}")
@@ -1650,6 +1650,32 @@ async def player_pack_file(token: str, path: str):
     if not src:
         raise HTTPException(404)
     return FileResponse(src, filename=os.path.basename(path))
+
+
+@app.get("/p/{token}/sync")
+async def player_pack_sync_index(token: str):
+    """The pack's files and checksums, for the companion app to compare with what it has."""
+    from . import playerpack
+    s = _pack_server(token)
+    return {"files": await asyncio.to_thread(playerpack.sync_index, s)}
+
+
+class SyncReq(BaseModel):
+    files: list[str]
+
+
+@app.post("/p/{token}/sync")
+async def player_pack_sync(token: str, body: SyncReq):
+    """The requested files in one tar stream. X-Sync-Bytes says how much is coming."""
+    from . import playerpack
+    s = _pack_server(token)
+    if len(body.files) > 100_000:
+        raise HTTPException(400, "Too many files")
+    items = await asyncio.to_thread(playerpack.sync_files, s, body.files)
+    total = sum(os.path.getsize(p) for _, p in items)
+    return StreamingResponse(playerpack.tar_stream(items), media_type="application/x-tar",
+                             headers={"X-Sync-Bytes": str(total), "X-Sync-Files": str(len(items)),
+                                      "Cache-Control": "no-store"})
 
 
 @app.get("/p/{token}/prism.zip")

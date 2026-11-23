@@ -7,66 +7,99 @@
 <title>Join the server</title>
 <link rel="icon" href="/static/brand/favicon.svg">
 <style>
-  :root { color-scheme: dark; --bg: #121418; --ink: #E9ECF1; --mute: #8B93A1; --card: #1A1D23; --line: #2A2F38; --acc: #FF9D4A; --acc-ink: #1B1206; }
+  :root { color-scheme: dark; --bg: #121418; --ink: #E9ECF1; --mute: #8B93A1; --card: #1A1D23; --card2: #20242B; --line: #2A2F38;
+    --acc: #FF9D4A; --acc-ink: #1B1206; --ok: #4ADE80; }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 760px; margin: 0 auto; padding: 48px 20px 64px; }
-  h1 { font-size: 30px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.01em; }
-  h2 { font-size: 18px; margin: 0 0 6px; }
-  p { margin: 0 0 10px; }
-  .facts { color: var(--mute); margin-bottom: 22px; }
-  .addr { display: flex; gap: 8px; align-items: center; margin: 14px 0 30px; flex-wrap: wrap; }
-  .addr code { font: 600 17px ui-monospace, "SF Mono", Menlo, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; }
-  .way { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 20px 22px; margin-bottom: 16px; }
-  .way.best { border-color: #6B4A2A; }
-  ol { margin: 8px 0 14px; padding-left: 22px; }
-  li { margin-bottom: 4px; }
-  .tag { display: inline-block; font-size: 12px; color: var(--acc); margin-left: 8px; vertical-align: 2px; }
+  main { max-width: 720px; margin: 0 auto; padding: 56px 22px 72px; }
   a { color: var(--acc); }
-  a.btn, button { display: inline-block; background: var(--acc); color: var(--acc-ink); font: 600 15px system-ui, sans-serif; text-decoration: none;
-    border: 0; border-radius: 10px; padding: 10px 16px; cursor: pointer; }
-  button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 8px 12px; font-weight: 500; }
-  a.btn:focus-visible, button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
-  .note { color: var(--mute); font-size: 13px; }
-  .pack { border-left: 3px solid var(--acc); padding: 2px 0 2px 14px; margin: 0 0 22px; }
+  h1 { font-size: 34px; line-height: 1.1; margin: 0 0 10px; letter-spacing: -0.015em; }
+  h2 { font-size: 19px; margin: 0; }
+  p { margin: 0 0 10px; }
+  .facts { color: var(--mute); }
+  .on { color: var(--ok); }
+  .addr { display: flex; gap: 8px; align-items: center; margin: 18px 0 0; flex-wrap: wrap; }
+  .addr code { font: 600 17px ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; }
+  .pack { color: var(--mute); font-size: 14px; margin-top: 18px; }
+
+  .main { margin-top: 40px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 24px 24px 20px; }
+  .main > p { color: var(--mute); }
+  ol.steps { list-style: none; counter-reset: s; margin: 18px 0 0; padding: 0; display: grid; gap: 16px; }
+  ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 34px 1fr; column-gap: 12px; align-items: start; }
+  ol.steps > li::before { content: counter(s); grid-row: 1 / span 3; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--card2); border: 1px solid var(--line); font-weight: 650; font-size: 14px; }
+  ol.steps > li > * { grid-column: 2; }
+  .steps b { font-size: 16px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 6px 0 4px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; background: var(--acc); color: var(--acc-ink); font: 650 15px system-ui, sans-serif; text-decoration: none;
+    border: 0; border-radius: 10px; padding: 11px 18px; cursor: pointer; }
+  .btn.quiet { background: var(--card2); color: var(--ink); border: 1px solid var(--line); font-weight: 550; padding: 9px 14px; }
+  .btn:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .small { color: var(--mute); font-size: 13px; }
+  .small a { color: var(--mute); }
+
+  .others { margin-top: 36px; }
+  .others h2 { margin-bottom: 10px; }
+  .way { border-top: 1px solid var(--line); padding: 16px 0; }
+  .way:last-of-type { border-bottom: 1px solid var(--line); }
+  .way .top { display: flex; gap: 16px; align-items: center; justify-content: space-between; }
+  .way .top p { color: var(--mute); font-size: 14px; margin: 2px 0 0; }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--mute); font-size: 13px; width: fit-content; }
+  details ol { margin: 8px 0 0; padding-left: 20px; color: var(--mute); font-size: 14px; }
+  details li { margin-bottom: 3px; }
+  footer { margin-top: 30px; color: var(--mute); font-size: 13px; }
+  @media (max-width: 560px) { .way .top { flex-direction: column; align-items: flex-start; } h1 { font-size: 28px; } }
 </style>
 </head>
 <body>
 <main>
   <h1 id="name">Join the server</h1>
   <div class="facts" id="facts">Loading…</div>
-  <div class="addr"><code id="addr">–</code><button class="quiet" id="copy">Copy address</button></div>
-  <div id="pack" class="pack" hidden></div>
+  <div class="addr"><code id="addr">–</code><button class="btn quiet" id="copy">Copy address</button></div>
+  <p class="pack" id="pack" hidden></p>
 
-  <section class="way best">
-    <h2>Prism Launcher <span class="tag">updates itself</span></h2>
-    <p>Everything set up in one go, and kept matching the server: when its mods change, yours update the next time you press Play.</p>
-    <ol>
-      <li>Install <a href="https://prismlauncher.org" rel="noopener">Prism Launcher</a> (free, for Windows, Mac and Linux) and sign in with your Microsoft account.</li>
-      <li>Download the instance below and drag the file into Prism's window (or Add Instance → Import).</li>
-      <li>Press Play. The first start downloads the mods, which takes a few minutes. The server is already in your multiplayer list.</li>
+  <section class="main" aria-labelledby="apph">
+    <h2 id="apph">Play with the SpawnPoint app</h2>
+    <p style="margin-top:6px">It sets everything up and keeps your mods matching the server's. You only do this once.</p>
+    <ol class="steps">
+      <li><b>Get the app</b>
+        <div class="row"><a class="btn" id="dlmain" href="#">Download the app</a><span class="small" id="dlother"></span></div>
+        <span class="small" id="dlnote"></span></li>
+      <li><b>Add this server to it</b>
+        <div class="row"><a class="btn" id="addapp" href="#">Add to the SpawnPoint app</a></div>
+        <span class="small">Nothing happened? Install the app from step 1 first, then press this again.</span></li>
+      <li><b>Press Play</b>
+        <span class="small" id="playnote">The first time, the app downloads the mods. After that it only fetches what changed, and joins the server for you.</span></li>
     </ol>
-    <a class="btn" id="prism" href="#">Download for Prism Launcher</a>
   </section>
 
-  <section class="way">
-    <h2>Modrinth App</h2>
-    <p id="mrsync">One file with everything. Mods published on Modrinth download from Modrinth; the rest is inside.</p>
-    <ol>
-      <li>Install the <a href="https://modrinth.com/app" rel="noopener">Modrinth App</a> and sign in with your Microsoft account.</li>
-      <li>Download the file below and open it with the Modrinth App (or drag it onto the app's window).</li>
-      <li>Press Play, then join from the multiplayer list.</li>
-    </ol>
-    <a class="btn" id="mrpack" href="#">Download for the Modrinth App</a>
+  <section class="others" aria-labelledby="oth">
+    <h2 id="oth">Other ways to join</h2>
+    <div class="way">
+      <div class="top"><div><b>Prism Launcher</b><p>An instance that updates its mods every time you press Play (slower than the app).</p></div>
+        <a class="btn quiet" id="prism" href="#">Download</a></div>
+      <details><summary>How to use it</summary><ol>
+        <li>Install <a href="https://prismlauncher.org" rel="noopener">Prism Launcher</a> and sign in with your Microsoft account.</li>
+        <li>Drag the downloaded file into Prism's window (or Add Instance → Import).</li>
+        <li>Press Play. The server is already in your multiplayer list.</li></ol></details>
+    </div>
+    <div class="way">
+      <div class="top"><div><b>Modrinth App</b><p>One file with everything. Download it again when the server's mods change.</p></div>
+        <a class="btn quiet" id="mrpack" href="#">Download</a></div>
+      <details><summary>How to use it</summary><ol>
+        <li>Install the <a href="https://modrinth.com/app" rel="noopener">Modrinth App</a> and sign in.</li>
+        <li>Open the downloaded file with it, or drag it onto the app's window.</li>
+        <li>Press Play, then join from the multiplayer list.</li></ol></details>
+    </div>
+    <div class="way">
+      <div class="top"><div><b>Any other launcher</b><p>The mods and settings as a zip. Download it again when the server's mods change.</p></div>
+        <a class="btn quiet" id="zip" href="#">Download</a></div>
+      <details><summary>How to use it</summary><ol id="anysteps"></ol></details>
+    </div>
   </section>
 
-  <section class="way">
-    <h2>Any other launcher</h2>
-    <p id="anysync">The mods and settings as a zip, to copy into your game folder.</p>
-    <ol id="anysteps"></ol>
-    <a class="btn" id="zip" href="#">Download the mods</a> <span class="note" id="size"></span>
-  </section>
-  <p class="note">These files come from the server itself. They're for playing on it, so please don't share them elsewhere: the mods belong to their authors.</p>
+  <footer>These files come from the server itself, for playing on it. Please don't share them elsewhere: the mods belong to their authors.</footer>
 </main>
 <script>
 "use strict";
@@ -74,27 +107,50 @@ const token = location.pathname.split("/")[2], base = `/p/${encodeURIComponent(t
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const LD = { neoforge: "NeoForge", forge: "Forge", fabric: "Fabric", quilt: "Quilt" };
+const PHONE = /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent) || navigator.userAgentData?.mobile;
+const OS = PHONE ? "" : (() => {
+  const p = (navigator.userAgentData?.platform || navigator.platform || navigator.userAgent || "").toLowerCase();
+  return p.includes("win") ? "windows" : p.includes("mac") ? "mac" : (p.includes("linux") || p.includes("x11")) ? "linux" : "";
+})();
+const OSNAME = { windows: "Windows", mac: "Mac", linux: "Linux" };
+
 fetch(`${base}/info`).then((r) => r.ok ? r.json() : Promise.reject()).then((i) => {
   document.title = `Join ${i.name}`;
   $("name").textContent = `Join ${i.name}`;
   const ld = LD[i.loader] || i.loader;
-  $("facts").textContent = `Minecraft ${i.mc_version}${ld ? ` with ${ld} ${i.loader_version || ""}` : ""} · ${i.mods} mods · ${i.online ? "online now" : "offline right now"}`;
+  $("facts").innerHTML = `Minecraft ${esc(i.mc_version)}${ld ? ` with ${esc(ld)} ${esc(i.loader_version || "")}` : ""} · ${i.mods} mods · `
+    + (i.online ? `<span class="on">online now</span>` : "offline right now");
   $("addr").textContent = i.address;
   $("copy").onclick = () => navigator.clipboard.writeText(i.address).then(() => { $("copy").textContent = "Copied"; setTimeout(() => ($("copy").textContent = "Copy address"), 1500); });
   if (i.pack?.title) {
     $("pack").hidden = false;
-    $("pack").innerHTML = `This server runs the <b>${esc(i.pack.title)}</b> modpack${i.pack.version ? `, version ${esc(i.pack.version)}` : ""}. If you already use a launcher that has it (CurseForge, FTB, Modrinth or Prism), installing that exact version works too, and adds the pack's extras like minimaps and performance mods. The downloads below have everything the server needs.`;
+    $("pack").textContent = `This server runs ${i.pack.title}${i.pack.version ? ` ${i.pack.version}` : ""}. Already have that exact version in a launcher? You can use it instead.`;
   }
+
+  // Step 1: the app for this computer, the others as small links
+  const a = i.app || {}, page = a.page || "https://github.com/z354prance/SpawnPoint-Launcher/releases/latest";
+  const mine = OS && a[OS];
+  $("dlmain").href = mine || page;
+  $("dlmain").textContent = mine ? `Download for ${OSNAME[OS]}` : "Download the app";
+  const rest = ["windows", "mac", "linux"].filter((o) => o !== OS && a[o]);
+  $("dlother").innerHTML = rest.length ? `or for ${rest.map((o) => `<a href="${esc(a[o])}">${OSNAME[o]}</a>`).join(", ")}` : "";
+  $("dlnote").textContent = OS === "windows" ? "If Windows says it protected your PC, choose More info, then Run anyway."
+    : OS === "mac" ? "The first time, right-click the app and choose Open."
+    : OS === "linux" ? "Make the AppImage executable, then run it."
+    : PHONE ? "The app and Minecraft Java run on computers: open this page on yours." : "";
+
+  // Step 2: hand this page's link to the app
+  $("addapp").href = `spawnpoint://add?link=${encodeURIComponent(i.page || location.origin + base)}`;
+  $("playnote").textContent = `The first time, the app downloads the mods (about ${Math.max(1, Math.round(i.size / 2 ** 20))} MB). `
+    + "After that it only fetches what changed, and joins the server for you.";
+
   $("prism").href = `${base}/prism.zip`;
-  $("zip").href = `${base}/pack.zip`;
   $("mrpack").href = `${base}/pack.mrpack`;
-  $("mrsync").textContent = "One file with everything. Mods published on Modrinth download from Modrinth; the rest is inside. When the server's mods change, download it again.";
-  $("size").textContent = `about ${Math.max(1, Math.round(i.size / 2 ** 20))} MB`;
+  $("zip").href = `${base}/pack.zip`;
   $("anysteps").innerHTML = [
     `In your launcher, make a profile for Minecraft ${esc(i.mc_version)}${ld ? ` with ${esc(ld)} ${esc(i.loader_version || "")}` : ""}.`,
     "Unzip the download into that profile's game folder (the one with the mods folder), replacing files if asked.",
     `Start the game and join <b>${esc(i.address)}</b>.`].map((x) => `<li>${x}</li>`).join("");
-  $("anysync").textContent = "The mods and settings as a zip, to copy into your game folder. When the server's mods change, download it again.";
 }).catch(() => { $("facts").textContent = "This link isn't active any more. Ask the server's owner for a new one."; });
 </script>
 </body>

@@ -248,6 +248,78 @@ def index(s: dict) -> tuple[bytes, bytes, dict[str, str], list[str]]:
     return pack, idx, fl, left
 
 
+# ------------------------------------------------------------------ the companion app's downloads
+_app_cache: dict = {"at": 0.0, "links": None}
+
+
+async def app_downloads() -> dict:
+    """Direct links to the newest SpawnPoint app for each system (looked up at most hourly),
+    and the releases page, which always works."""
+    import httpx
+    page = f"https://github.com/{config.LAUNCHER_REPO}/releases/latest"
+    if time.time() - _app_cache["at"] < 3600 and _app_cache["links"] is not None:
+        return _app_cache["links"]
+    links = {"page": page}
+    try:
+        async with httpx.AsyncClient(timeout=10, headers={"User-Agent": "SpawnPoint"}) as c:
+            r = await c.get(f"https://api.github.com/repos/{config.LAUNCHER_REPO}/releases/latest")
+            r.raise_for_status()
+            rel = r.json()
+        for a in rel.get("assets", []):
+            n, u = a.get("name", ""), a.get("browser_download_url", "")
+            if n.endswith("-setup.exe"):
+                links["windows"] = u
+            elif n.endswith(".dmg"):
+                links["mac"] = u
+            elif n.endswith(".AppImage"):
+                links["linux"] = u
+            elif n.endswith(".deb"):
+                links["deb"] = u
+        links["version"] = rel.get("tag_name", "")
+    except Exception as e:
+        log.info("couldn't look up the SpawnPoint app's newest release: %s", e)
+    _app_cache.update(at=time.time(), links=links)
+    return links
+
+
+# ------------------------------------------------------------------ fast sync (companion app)
+# packwiz fetches every file in its own request; through a tunnel that's thousands of
+# round trips. The companion app instead asks for the list once, works out what it's
+# missing, and gets all of that back in one stream.
+def sync_index(s: dict) -> dict:
+    """{path: {sha256, size, preserve}} for every file in the pack."""
+    _, _, fl, _ = index(s)
+    return {rel: {"sha256": _sha256(p), "size": os.path.getsize(p), "preserve": not rel.startswith("mods/")}
+            for rel, p in sorted(fl.items())}
+
+
+def sync_files(s: dict, wanted: list[str]) -> list[tuple[str, str]]:
+    """The requested pack files, as (path in the pack, file on disk). Only files that are in
+    the pack can be asked for."""
+    _, _, fl, _ = index(s)
+    return [(rel, fl[rel]) for rel in dict.fromkeys(wanted) if rel in fl]
+
+
+def tar_stream(items: list[tuple[str, str]]):
+    """The files as an uncompressed tar, made while it's sent (mods are already compressed)."""
+    import tarfile
+    from .files import _Sink
+    sink = _Sink()
+    with tarfile.open(fileobj=sink, mode="w|", format=tarfile.PAX_FORMAT) as t:
+        for rel, src in items:
+            try:
+                info = t.gettarinfo(src, arcname=rel)
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                with open(src, "rb") as f:
+                    t.addfile(info, f)
+            except OSError as e:
+                log.info("sync: skipped %s: %s", rel, e)
+            if sink.pos:
+                yield sink.take()
+    yield sink.take()
+
+
 def _toml(v: str) -> str:
     return str(v).replace("\\", "\\\\").replace('"', '\\"')
 

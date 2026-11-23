@@ -77,6 +77,10 @@ def test_prism_zip(tmp_path, monkeypatch):
 
 def test_routes(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ADMIN_PASSWORD", "pw")
+
+    async def links():
+        return {"page": "https://github.com/x/y/releases/latest", "windows": "https://github.com/x/y/a-setup.exe"}
+    monkeypatch.setattr(playerpack, "app_downloads", links)
     monkeypatch.setattr(playerpack, "bootstrap_jar", lambda: b"JAR")
     _server(tmp_path, monkeypatch)
     users._fails.clear(); users.ensure_bootstrap()
@@ -94,6 +98,7 @@ def test_routes(tmp_path, monkeypatch):
     assert anon.get(f"/p/{t}").status_code == 200 and anon.get("/p/wrongtoken123").status_code == 404
     info = anon.get(f"/p/{t}/info").json()
     assert info["mods"] == 2 and info["address"] == "a.mc.example.com"
+    assert info["app"]["windows"].endswith("-setup.exe") and info["page"].endswith(f"/p/{t}")
     assert b"index.toml" in anon.get(f"/p/{t}/pack/pack.toml").content
     assert anon.get(f"/p/{t}/pack/mods/create-1.21.1-6.0.jar").status_code == 200
     for bad in ("config/discord.toml", "mods/Chunky-NeoForge-1.4.jar", "../srv/config/jei/jei.toml", "kubejs/server_scripts/x.js"):
@@ -195,3 +200,25 @@ def test_old_automodpack_is_removed(tmp_path, monkeypatch):
     _jar(base / "mods" / "automodpack-own.jar")                      # never touched without the old setting
     playerpack.before_boot(state.get("a"))
     assert (base / "mods" / "automodpack-own.jar").exists()
+
+
+
+def test_sync_for_the_companion_app(tmp_path, monkeypatch):
+    import tarfile
+    monkeypatch.setattr(config, "ADMIN_PASSWORD", "pw")
+    base, _ = _server(tmp_path, monkeypatch)
+    playerpack.set_settings("a", on=True)
+    t = state.get("a")["player_pack"]["token"]
+    anon = TestClient(main.app)
+    idx = anon.get(f"/p/{t}/sync").json()["files"]
+    assert set(idx) == {"mods/create-1.21.1-6.0.jar", "mods/oculus-1.8.jar", "config/jei/jei.toml"}
+    want = hashlib.sha256((base / "config" / "jei" / "jei.toml").read_bytes()).hexdigest()
+    assert idx["config/jei/jei.toml"] == {"sha256": want, "size": 6, "preserve": True}
+    assert idx["mods/oculus-1.8.jar"]["preserve"] is False
+    r = anon.post(f"/p/{t}/sync", json={"files": ["mods/oculus-1.8.jar", "config/jei/jei.toml",
+                                                    "config/discord.toml", "../../etc/passwd"]})
+    assert r.headers["x-sync-files"] == "2"
+    tf = tarfile.open(fileobj=io.BytesIO(r.content))
+    assert sorted(tf.getnames()) == ["config/jei/jei.toml", "mods/oculus-1.8.jar"]   # only pack files
+    assert tf.extractfile("config/jei/jei.toml").read() == b"a = 1\n"
+    assert int(r.headers["x-sync-bytes"]) == sum(m.size for m in tf.getmembers())
