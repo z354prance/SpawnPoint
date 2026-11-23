@@ -168,7 +168,7 @@ def _trial_boot(s: dict, trial: str, target: str) -> tuple[bool, list[str]]:
         cl.images.pull(config.IMAGE, tag=t["java_tag"])
     env = dockerctl.build_env(t, max(2, len(topology.allocator().cpus_for(s["id"])) or 4))
     env.pop("MODRINTH_PROJECTS", None)                        # the copy's mods folder already has what it needs
-    c = cl.containers.create(image, name=name, environment=env,
+    c = cl.containers.create(image, name=name, environment=env, init=True,
                              volumes={dockerctl.host_path(trial): {"bind": "/data", "mode": "rw"}},
                              network=config.DOCKER_NETWORK,
                              mem_limit=f"{perf.container_limit_gb(s['memory']['max_gb'], s.get('mod_count'))}g",

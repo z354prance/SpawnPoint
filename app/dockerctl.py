@@ -257,6 +257,10 @@ def replace_container(s: dict, cpus: list[int], worker_threads: int, start: bool
         restart_policy={"Name": "no"},
         stdin_open=True, tty=False,
         stop_signal="SIGTERM",
+        # A small init as the container's first process: it reaps processes that have exited.
+        # Without it, a Java that exited but wasn't reaped ("zombie") can't be killed, and
+        # the container can't be ended either.
+        init=True,
     )
     if start:
         c.start()

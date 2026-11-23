@@ -861,7 +861,7 @@ def watch_exit(sid: str) -> None:
             try:
                 c.kill()
             except Exception as e:
-                log.info("[%s] couldn't end the stuck server: %s", sid, e)
+                log.warning("[%s] couldn't end the stuck server: %s", sid, e)
         w.update(saved_at=None, stopping=False)
 
 
