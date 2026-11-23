@@ -51,6 +51,7 @@ const ICON = {
   power: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 3v9"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
 };
 const LOGO = '<img src="/static/brand/spawnpoint-icon.svg" alt="">';
@@ -336,11 +337,13 @@ function drawServer() {
 
 function drawDetails(s) {
   const st = s.stats || {}, on = running(s), lists = LISTS[s.id], bk = BK[s.id];
-  const acts = !can("moderator") ? "" : on
+  const pp = s.player_pack?.enabled && s.player_pack?.token
+    ? `<button class="small" id="ppopen" title="Copy or open the link players download the mods from">${ICON.link}Player pack</button>` : "";
+  const acts = pp + (!can("moderator") ? "" : on
     ? `<button class="ic" data-a="restart" aria-label="Restart" title="Restart">${ICON.restart}</button>
        <button class="ic" data-a="stop" aria-label="Stop" title="Stop">${ICON.stop}</button>
        <button class="ic danger" data-a="kill" aria-label="Force stop" title="Force stop (no save)">${ICON.power}</button>`
-    : `<button class="primary" data-a="start">${ICON.play}Start</button>`;
+    : `<button class="primary" data-a="start">${ICON.play}Start</button>`);
   const managed = (s.managed_mods || []).length;
   const facts = [
     ["Version", versionLabel(s)], ["Modpack", packLabel(s)],
@@ -358,6 +361,7 @@ function drawDetails(s) {
     ${s.progress ? `<div class="setup"><div class="lab"><span><b>Step ${s.progress.step} of ${s.progress.of}: ${esc(s.progress.label)}</b>${s.progress.detail ? `, ${esc(s.progress.detail)}` : ""}</span>${s.progress.percent != null ? `<span>${s.progress.percent.toFixed(0)}%</span>` : ""}</div>${bar4(s.progress)}</div>` : ""}
     ${showMsg || (s.phase_msg && /client-only/.test(s.phase_msg)) ? `<div class="banner ${s.phase === "error" ? "bad" : "info"} msg">${esc(s.phase_msg)}</div>` : ""}
     <dl class="facts">${facts.map(([k, v]) => `<div><dt title="${esc(k)}">${esc(k)}</dt><dd title="${esc(v)}">${esc(v)}</dd></div>`).join("")}</dl>`;
+  $("#ppopen") && ($("#ppopen").onclick = () => openPlayerPack(s.id));
   $$("[data-a]", $("#details")).forEach((b) => (b.onclick = async () => {
     if (b.dataset.a === "kill" && !confirm(KILL_WARNING)) return;
     b.disabled = true;
@@ -1080,11 +1084,22 @@ async function drawChatCard(sid, c) {
 }
 
 // Player pack: a page where people download what they need to join (Prism instance or a zip).
+const mbs = (n) => `${Math.max(1, Math.round(n / 2 ** 20))} MB`;
+// What's in a player pack. Counting scans every file of the pack, so it loads after the rest.
+function packCounts(p) {
+  const n = (k, w) => `${k} ${w}${k === 1 ? "" : "s"}`;
+  return `<p class="sub">${n(p.mods, "mod")} and ${n(p.count - p.mods, "other file")}, ${mbs(p.size)}.${p.left_out.length ? ` Left out: ${p.left_out.length}.` : ""}</p>
+    ${p.left_out.length ? `<details><summary class="sub">What's left out, and why</summary><ul class="sub" style="margin:6px 0 0 18px">${p.left_out.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}`;
+}
+async function fillPackCounts(sid, el) {
+  const d = await api(`/servers/${sid}/player-pack?details=true`).catch(() => null);
+  if (el?.isConnected && d?.mods !== undefined) el.innerHTML = packCounts(d);
+}
+
 async function drawPlayerPack(sid, p) {
   const box = $("#ppcard"); if (!box || box.hidden) return;
-  p = p || await api(`/servers/${sid}/player-pack`).catch(() => null);
+  p = p || await api(`/servers/${sid}/player-pack?details=false`).catch(() => null);
   if (!p) { box.remove(); return; }
-  const mb = (n) => `${Math.max(1, Math.round(n / 2 ** 20))} MB`;
   const guess = location.origin.startsWith("http://localhost") || /^http:\/\/\d/.test(location.origin) ? "" : location.origin;
   box.innerHTML = `<h4 style="margin-top:0">Player pack</h4>
     <label class="row" style="color:var(--ink)"><input type="checkbox" id="ppon" ${p.enabled ? "checked" : ""}> Give players a download page for this server's mods</label>
@@ -1095,8 +1110,7 @@ async function drawPlayerPack(sid, p) {
     ${p.enabled ? `
       <div class="row" style="flex-wrap:nowrap;margin-top:6px"><input class="mono" readonly style="flex:1" value="${esc(p.page || "Save the address above to get the link")}" aria-label="Player pack link">
       ${p.page ? `<button class="small" id="ppcopy">Copy</button>` : ""}<button class="small" id="ppnew">New link</button></div>
-      <p class="sub">${p.mods} mods and ${p.count - p.mods} other files, ${mb(p.size)}.${p.left_out.length ? ` Left out: ${p.left_out.length}.` : ""}</p>
-      ${p.left_out.length ? `<details><summary class="sub">What's left out, and why</summary><ul class="sub" style="margin:6px 0 0 18px">${p.left_out.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></details>` : ""}
+      <div id="ppcount">${p.mods !== undefined ? packCounts(p) : `<p class="sub">Counting what's in it…</p>`}</div>
       <label class="row" style="color:var(--ink);margin-top:12px"><input type="checkbox" id="ppsync" ${p.sync ? "checked" : ""}> Keep players' mods in sync with AutoModpack</label>
       ${p.sync_pending ? `<p class="sub" style="color:var(--warn)">AutoModpack is added but isn't on the server yet: restart the server to download it. Until then, the zip and the Modrinth file still carry all the mods and tell players to download again after changes. <button class="small" id="pprestart">Restart now</button></p>` : p.sync ? `<p class="sub" style="color:var(--gold)">AutoModpack is running. The zip and the Modrinth file only carry AutoModpack, which brings the rest on first join.</p>` : ""}
       <p class="sub">Adds the AutoModpack mod to the server and to all three downloads. When this server's mods change, players' copies update the next time they join, whichever launcher they use. It goes through the same address and port as the game.</p>` : ""}
@@ -1113,6 +1127,29 @@ async function drawPlayerPack(sid, p) {
   $("#ppnew") && ($("#ppnew").onclick = () => confirm("Make a new link? The old one stops working, and Prism instances made from it stop updating.") && save({ new_link: true }, "New link made"));
   $("#pprestart") && ($("#pprestart").onclick = async () => { if (await act(() => api(`/servers/${sid}/action/restart`, { method: "POST" }), "Restarting to add AutoModpack")) refreshList(); });
   $("#ppcopy") && ($("#ppcopy").onclick = () => navigator.clipboard.writeText(p.page).then(() => toast("Link copied")));
+  if (p.enabled && p.mods === undefined) fillPackCounts(sid, $("#ppcount"));
+}
+
+// The same link from the server's page: a floating card to copy or open it.
+async function openPlayerPack(sid) {
+  const s = LIST.find((x) => x.id === sid) || {};
+  modal(`<h2>Player pack</h2><p class="muted">Loading…</p>`);
+  const p = await api(`/servers/${sid}/player-pack?details=false`).catch((e) => ({ error: e.message }));
+  if (p.error) { modal(`<h2>Player pack</h2><p class="banner bad">${esc(p.error)}</p>`); return; }
+  modal(`<h2>Player pack for ${esc(s.name || sid)}</h2>
+    ${p.page ? `<p class="muted" style="margin-top:0">Send this link to your players. It has everything they need to join: a Prism Launcher instance that updates itself, a Modrinth App file, and a zip for any launcher.</p>
+      <div class="row" style="flex-wrap:nowrap"><input class="mono" id="pplink" readonly style="flex:1" value="${esc(p.page)}" aria-label="Player pack link">
+      <button class="primary small" id="ppmcopy">Copy</button><a class="btn small" href="${esc(p.page)}" target="_blank" rel="noopener">Open</a></div>`
+      : `<p class="banner">The link needs the address players open SpawnPoint at. Set it in Settings → Player pack.</p>`}
+    <div id="ppmcount" style="margin-top:12px"><p class="sub">Counting what's in it…</p></div>
+    <p class="sub">${p.sync ? "AutoModpack is on: players' mods update when they join, whichever launcher they use."
+      : p.sync_pending ? "AutoModpack is added but starts with the server's next restart."
+      : "Prism keeps mods updated by itself; with the other downloads, players download again after mod changes."}</p>
+    <div class="row" style="justify-content:space-between;margin-top:14px">${can("moderator") ? `<button class="ghost small" id="ppmset">Settings</button>` : "<span></span>"}<button class="small" onclick="closeModal()">Close</button></div>`);
+  $("#ppmcopy") && ($("#ppmcopy").onclick = () => navigator.clipboard.writeText(p.page).then(() => toast("Link copied")));
+  $("#pplink")?.addEventListener("focus", (e) => e.target.select());
+  $("#ppmset") && ($("#ppmset").onclick = () => { closeModal(); location.hash = `#/s/${sid}/settings`; });
+  fillPackCounts(sid, $("#ppmcount"));
 }
 
 const COMMON_PROPS = ["motd", "difficulty", "gamemode", "max-players", "white-list", "pvp", "view-distance",

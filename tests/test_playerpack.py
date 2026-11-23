@@ -109,8 +109,11 @@ def test_routes(tmp_path, monkeypatch):
     c.post("/api/login", json={"username": "admin", "password": "pw"})
     assert c.put("/api/servers/a/player-pack", json={"enabled": True, "base_url": "not a url"}).status_code == 400
     r = c.put("/api/servers/a/player-pack", json={"enabled": True, "base_url": "https://sp.example.com/"}).json()
-    assert r["enabled"] and r["mods"] == 2 and r["page"] == f"https://sp.example.com/p/{r['token']}"
+    assert r["enabled"] and r["page"] == f"https://sp.example.com/p/{r['token']}"
+    assert c.get("/api/servers/a/player-pack").json()["mods"] == 2
     t = r["token"]
+    fast = c.get("/api/servers/a/player-pack", params={"details": False}).json()
+    assert fast["page"] == r["page"] and "mods" not in fast            # answers without scanning the pack
     anon = TestClient(main.app)
     assert anon.get(f"/p/{t}").status_code == 200 and anon.get("/p/wrongtoken123").status_code == 404
     info = anon.get(f"/p/{t}/info").json()

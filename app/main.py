@@ -1563,7 +1563,7 @@ class PlayerPackReq(BaseModel):
     base_url: str | None = None
 
 
-def _pack_view(sid: str) -> dict:
+def _pack_view(sid: str, details: bool = True) -> dict:
     from . import playerpack
     s = _get(sid)
     pp = playerpack.settings(s)
@@ -1572,16 +1572,17 @@ def _pack_view(sid: str) -> dict:
            "modded": s.get("loader") not in ("vanilla", "paper", "purpur", None, ""),
            "automodpack": bool(playerpack.automodpack_jar(s)),
            "sync_pending": bool(pp.get("sync")) and not playerpack.automodpack_jar(s)}
-    if out["enabled"]:
+    if out["enabled"] and details:
         fl, left = playerpack.files(s)
         out.update(count=len(fl), mods=sum(1 for k in fl if k.startswith("mods/")), left_out=left[:200],
                    size=sum(os.path.getsize(v) for v in fl.values()))
     return out
 
 
-@app.get("/api/servers/{sid}/player-pack", dependencies=moderator)
-async def player_pack_get(sid: str):
-    return await asyncio.to_thread(_pack_view, sid)
+@app.get("/api/servers/{sid}/player-pack", dependencies=viewer)
+async def player_pack_get(sid: str, details: bool = True):
+    """details=false answers at once; the counts (which scan the pack) come separately."""
+    return await asyncio.to_thread(_pack_view, sid, details)
 
 
 @app.put("/api/servers/{sid}/player-pack", dependencies=moderator)
@@ -1602,7 +1603,7 @@ async def player_pack_put(sid: str, body: PlayerPackReq):
             note = await playerpack.set_sync(sid, body.sync)
         except ValueError as e:
             raise HTTPException(409, f"AutoModpack isn't available for this server: {e}")
-    return {**(await asyncio.to_thread(_pack_view, sid)), "note": note}
+    return {**(await asyncio.to_thread(_pack_view, sid, False)), "note": note}
 
 
 def _pack_server(token: str) -> dict:

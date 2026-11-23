@@ -100,7 +100,29 @@ def _sha256(path: str) -> str:
     return _sha_cache[key]
 
 
+_check_cache: dict[tuple, bool] = {}
+
+
+def _cached(kind: str, path: str, fn) -> bool:
+    """Per-file checks (opening a jar, reading a config) remembered until the file changes:
+    a big pack has hundreds of each, and the card would wait for all of them every time."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return True
+    key = (kind, path, st.st_size, st.st_mtime_ns)
+    if key not in _check_cache:
+        if len(_check_cache) > 50000:
+            _check_cache.clear()
+        _check_cache[key] = fn(path)
+    return _check_cache[key]
+
+
 def _fabric_server_only(path: str) -> bool:
+    return _cached("fabric", path, _fabric_server_only_now)
+
+
+def _fabric_server_only_now(path: str) -> bool:
     try:
         with zipfile.ZipFile(path) as z:
             if "fabric.mod.json" in z.namelist():
@@ -112,6 +134,10 @@ def _fabric_server_only(path: str) -> bool:
 
 
 def _has_secret(path: str) -> bool:
+    return _cached("secret", path, _has_secret_now)
+
+
+def _has_secret_now(path: str) -> bool:
     try:
         with open(path, "rb") as f:
             return bool(SECRET.search(f.read(2 * 2**20)))
