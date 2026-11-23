@@ -328,7 +328,7 @@ function drawServer() {
       <section class="card mapcard" aria-label="World map"><div class="mhead" id="mhead"></div>
         <div class="mapbox"><canvas id="map" role="img" tabindex="0" title="Drag to move, scroll to zoom, double-click to go back to spawn"></canvas></div><div class="legend" id="legend"></div></section>
       <div class="statrow"><section class="card duo" id="duo" aria-label="Tick time and memory"></section><section class="card players" id="players" aria-label="Players"></section></div>`;
-    mapObs = new ResizeObserver(() => drawMap()); mapObs.observe($(".mapbox"));
+    mapObs = new ResizeObserver(() => redrawMap()); mapObs.observe($(".mapbox"));
     panZoom($("#map"));
   }
   $("#banners").innerHTML = engineBanner();
@@ -460,7 +460,7 @@ function toggleFullMap(force) {
   const card = $(".mapcard"); if (!card) return;
   const on = force ?? !card.classList.contains("full");
   card.classList.toggle("full", on); document.body.classList.toggle("mapfull", on);
-  drawMapHead(LIST.find((x) => x.id === SEL)); requestAnimationFrame(drawMap);
+  drawMapHead(LIST.find((x) => x.id === SEL)); redrawMap();
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $(".mapcard.full")) toggleFullMap(false); });
 
@@ -536,16 +536,51 @@ const FACES = new Map();                                // name -> Image (or nul
 function headImage(name) {
   if (!FACES.has(name)) {
     const im = new Image(); FACES.set(name, null);
-    im.onload = () => { FACES.set(name, im); requestAnimationFrame(drawMap); };
+    im.onload = () => { FACES.set(name, im); redrawMap(); };
     im.src = `/api/heads/${encodeURIComponent(name)}.png`;
   }
   return FACES.get(name);
 }
-function tileImage(url) {
-  let im = TILES.get(url);
-  if (!im) { im = new Image(); im.onload = () => requestAnimationFrame(drawMap); im.onerror = () => { im._bad = true; }; im.src = url; TILES.set(url, im);
-    if (TILES.size > 1500) TILES.delete(TILES.keys().next().value); }
-  return im;
+// Map tiles. A big world has thousands of regions: downloads go 8 at a time and only for
+// what's on screen, finished downloads redraw at most once a frame, and tiles in view stay
+// in the cache. (Loading them all at once, with a redraw per tile, locked browsers up.)
+let MAPDRAWQ = false;
+function redrawMap() { if (MAPDRAWQ) return; MAPDRAWQ = true; requestAnimationFrame(() => { MAPDRAWQ = false; drawMap(); }); }
+const TQ = { want: [], busy: 0 };
+const tileReady = (im) => im && im.complete && !im._bad && im.naturalWidth > 0;
+function cachedTile(url) {                               // loaded already, or null; never downloads
+  const im = TILES.get(url);
+  if (!im) return null;
+  TILES.delete(url); TILES.set(url, im);                 // most recently used goes last
+  return tileReady(im) ? im : null;
+}
+function tileImage(url) {                                // loaded, or null and asked for
+  if (!TILES.has(url)) TQ.want.push(url);
+  return cachedTile(url);
+}
+function pumpTiles() {
+  while (TQ.busy < 8 && TQ.want.length) {
+    const url = TQ.want.shift(); if (TILES.has(url)) continue;
+    const im = new Image(); TQ.busy++;
+    const done = () => { TQ.busy--; redrawMap(); pumpTiles(); };
+    im.onload = done; im.onerror = () => { im._bad = true; done(); };
+    im.src = url; TILES.set(url, im);
+  }
+  while (TILES.size > 2500) TILES.delete(TILES.keys().next().value);
+}
+// Overview tiles: 8x8 regions per image, for zoomed far out. Version = its newest region's.
+const OVERS = new WeakMap();
+function overTiles(tiles) {
+  let o = OVERS.get(tiles);
+  if (!o) {
+    const m = new Map();
+    for (const [tx, tz, ver] of tiles) {
+      const k = Math.floor(tx / 8) + "," + Math.floor(tz / 8), cur = m.get(k);
+      if (!cur || ver > cur[2]) m.set(k, [Math.floor(tx / 8), Math.floor(tz / 8), ver]);
+    }
+    o = [...m.values()]; OVERS.set(tiles, o);
+  }
+  return o;
 }
 function panZoom(cv) {
   let drag = null;
@@ -561,7 +596,7 @@ function panZoom(cv) {
       return;
     }
     moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
-    v.x -= (e.clientX - drag.x) / v.ppb; v.z -= (e.clientY - drag.y) / v.ppb; drag = { x: e.clientX, y: e.clientY }; drawMap();
+    v.x -= (e.clientX - drag.x) / v.ppb; v.z -= (e.clientY - drag.y) / v.ppb; drag = { x: e.clientX, y: e.clientY }; redrawMap();
   });
   const end = (e) => {
     const click = drag && moved < 5 && e.type === "pointerup";
@@ -580,7 +615,7 @@ function panZoom(cv) {
     const r = cv.getBoundingClientRect(), mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2;
     const wx = v.x + mx / v.ppb, wz = v.z + my / v.ppb;
     v.ppb = Math.min(MAX_PPB, Math.max(v.minppb || 0.01, v.ppb * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
-    v.x = wx - mx / v.ppb; v.z = wz - my / v.ppb; drawMap();
+    v.x = wx - mx / v.ppb; v.z = wz - my / v.ppb; redrawMap();
   }, { passive: false });
   cv.addEventListener("dblclick", () => { const s = LIST.find((x) => x.id === SEL); if (s) { delete VIEWS[s.id + "/" + (MAPDIM[s.id] || "overworld")]; drawMap(); } });
   cv.addEventListener("keydown", (e) => {
@@ -588,7 +623,7 @@ function panZoom(cv) {
     const k = { ArrowLeft: [-stepB, 0], ArrowRight: [stepB, 0], ArrowUp: [0, -stepB], ArrowDown: [0, stepB] }[e.key];
     if (k) { v.x += k[0]; v.z += k[1]; } else if (e.key === "+" || e.key === "=") v.ppb *= 1.25; else if (e.key === "-") v.ppb /= 1.25;
     else if (e.key === "0") { const s = LIST.find((x) => x.id === SEL); delete VIEWS[s.id + "/" + (MAPDIM[s.id] || "overworld")]; } else return;
-    e.preventDefault(); drawMap();
+    e.preventDefault(); redrawMap();
   });
   cv.style.cursor = "grab";
 }
@@ -665,21 +700,39 @@ function drawMap() {
   x.setTransform(1, 0, 0, 1, 0, 0); x.fillStyle = "#16191D"; x.fillRect(0, 0, cv.width, cv.height);
   const k = v.ppb * dpr, T = { a: k, b: 0, c: 0, d: k, e: (w / 2 - v.x * v.ppb) * dpr, f: (h / 2 - v.z * v.ppb) * dpr };
   const tiles = MAPIDX[s.id]?.dims?.[dim] || [];
+  TQ.want = [];                                             // only what this view needs gets downloaded
   if (tiles.length) {
-    const lod = v.ppb < 0.3 ? "small" : "full";
+    const lod = v.ppb < 0.1 ? "over" : v.ppb < 0.3 ? "small" : "full";
     const wx0 = v.x - w / 2 / v.ppb, wx1 = v.x + w / 2 / v.ppb, wz0 = v.z - h / 2 / v.ppb, wz1 = v.z + h / 2 / v.ppb;
+    const base = `/map/${encodeURIComponent(s.id)}/${dim}`;
     x.imageSmoothingEnabled = v.ppb < 1;
-    for (const [tx, tz, ver] of tiles) {
-      if (tx * 512 > wx1 || tx * 512 + 512 < wx0 || tz * 512 > wz1 || tz * 512 + 512 < wz0) continue;
-      const url = `/map/${encodeURIComponent(s.id)}/${dim}/${lod}/${tx}.${tz}.png?v=${ver}`;
-      let im = tileImage(url);
-      if (!im.complete || im._bad) {                          // show the other size while this one loads
-        const alt = TILES.get(`/map/${encodeURIComponent(s.id)}/${dim}/${lod === "full" ? "small" : "full"}/${tx}.${tz}.png?v=${ver}`);
-        if (alt && alt.complete && !alt._bad) im = alt; else continue;
+    const region = (tx, tz, ver, want) => {                 // one region, from whichever size is loaded
+      const sizes = want === "full" ? ["full", "small"] : ["small", "full"];
+      const im = tileImage(`${base}/${sizes[0]}/${tx}.${tz}.png?v=${ver}`) || cachedTile(`${base}/${sizes[1]}/${tx}.${tz}.png?v=${ver}`);
+      if (im) x.drawImage(im, T.e + tx * 512 * k, T.f + tz * 512 * k, 512 * k + 0.5, 512 * k + 0.5);
+    };
+    if (lod === "over") {
+      const byGroup = new Map();
+      for (const [gx, gz, ver] of overTiles(tiles)) {
+        if (gx * 4096 > wx1 || gx * 4096 + 4096 < wx0 || gz * 4096 > wz1 || gz * 4096 + 4096 < wz0) continue;
+        const im = tileImage(`${base}/over/${gx}.${gz}.png?v=${ver}`);
+        if (im) x.drawImage(im, T.e + gx * 4096 * k, T.f + gz * 4096 * k, 4096 * k + 0.5, 4096 * k + 0.5);
+        else byGroup.set(gx + "," + gz, true);
       }
-      x.drawImage(im, T.e + tx * 512 * k, T.f + tz * 512 * k, 512 * k + 0.5, 512 * k + 0.5);
+      if (byGroup.size)                                     // while an overview loads: any small tiles already here
+        for (const [tx, tz, ver] of tiles) {
+          if (!byGroup.has(Math.floor(tx / 8) + "," + Math.floor(tz / 8))) continue;
+          const im = cachedTile(`${base}/small/${tx}.${tz}.png?v=${ver}`);
+          if (im) x.drawImage(im, T.e + tx * 512 * k, T.f + tz * 512 * k, 512 * k + 0.5, 512 * k + 0.5);
+        }
+    } else {
+      for (const [tx, tz, ver] of tiles) {
+        if (tx * 512 > wx1 || tx * 512 + 512 < wx0 || tz * 512 > wz1 || tz * 512 + 512 < wz0) continue;
+        region(tx, tz, ver, lod);
+      }
     }
   }
+  pumpTiles();
   if (dim === "overworld" && hasGen(s) && (!tiles.length || overlayOn())) drawChunks(x, cv.width, cv.height, T, g, !tiles.length);
   if (!tiles.length && !hasGen(s)) {
     x.setTransform(1, 0, 0, 1, 0, 0); x.fillStyle = "#7D8593"; x.font = `${13 * dpr}px Geist, Inter, sans-serif`; x.textAlign = "center";

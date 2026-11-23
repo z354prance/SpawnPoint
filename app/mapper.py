@@ -267,6 +267,53 @@ def tile_path(sid: str, dim: str, lod: str, x: int, z: int) -> str:
     return os.path.join(map_dir(sid), dim, lod, f"{x}.{z}.png")
 
 
+OVER = 8                                         # regions across one overview tile (4096 blocks)
+_over_lock = __import__("threading").Lock()
+
+
+def tile_file(sid: str, dim: str, lod: str, x: int, z: int) -> str | None:
+    """The file for a tile, building an overview tile (lod "over": 8x8 regions in one image,
+    made from their small tiles) when it's missing or older than any of them. Zoomed out on a
+    big world that's a few dozen images instead of thousands."""
+    if lod != "over":
+        p = tile_path(sid, dim, lod, x, z)
+        return p if os.path.isfile(p) else None
+    from .flatmap import SMALL
+    sdir = os.path.join(map_dir(sid), dim, "small")
+    parts = []
+    for i in range(OVER):
+        for j in range(OVER):
+            p = os.path.join(sdir, f"{x * OVER + i}.{z * OVER + j}.png")
+            try:
+                parts.append((i, j, p, os.path.getmtime(p)))
+            except OSError:
+                pass
+    if not parts:
+        return None
+    out = tile_path(sid, dim, "over", x, z)
+    newest = max(m for *_, m in parts)
+    with _over_lock:
+        try:
+            if os.path.getmtime(out) >= newest:
+                return out
+        except OSError:
+            pass
+        from PIL import Image
+        im = Image.new("RGBA", (OVER * SMALL, OVER * SMALL), (0, 0, 0, 0))
+        for i, j, p, _ in parts:
+            try:
+                with Image.open(p) as t:
+                    im.paste(t.convert("RGBA"), (i * SMALL, j * SMALL))
+            except OSError:
+                continue
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        tmp = out + ".tmp"
+        im.save(tmp, "PNG", compress_level=6)
+        os.replace(tmp, out)
+        os.utime(out, (newest, newest))                      # "as new as its newest region"
+    return out
+
+
 def public_index(sid: str) -> dict:
     """What the dashboard needs: which tiles exist, with a version for caching."""
     idx = read_index(sid)

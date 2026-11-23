@@ -43,10 +43,41 @@ const tiles = new Map(), faces = new Map();
 const MAX_PPB = 4;
 
 function ago(t) { const s = Date.now() / 1000 - t; return s < 90 ? "just now" : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 172800 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} days ago`; }
+// Downloads go 8 at a time and only for what's on screen; redraws happen once a frame.
+// (A big world has thousands of regions: loading them all at once locked browsers up.)
+let drawQ = false;
+function redraw() { if (drawQ) return; drawQ = true; requestAnimationFrame(() => { drawQ = false; draw(); }); }
+const q = { want: [], busy: 0 };
+const ready = (im) => im && im.complete && !im.bad && im.naturalWidth > 0;
+function cached(url, cache) { const im = cache.get(url); if (!im) return null; cache.delete(url); cache.set(url, im); return ready(im) ? im : null; }
 function img(url, cache) {
-  let im = cache.get(url);
-  if (!im) { im = new Image(); im.onload = () => requestAnimationFrame(draw); im.onerror = () => { im.bad = true; }; im.src = url; cache.set(url, im); }
-  return im.complete && !im.bad && im.naturalWidth ? im : null;
+  if (cache === faces) {
+    let im = cache.get(url);
+    if (!im) { im = new Image(); im.onload = redraw; im.onerror = () => { im.bad = true; }; im.src = url; cache.set(url, im); }
+    return ready(im) ? im : null;
+  }
+  if (!cache.has(url)) q.want.push(url);
+  return cached(url, cache);
+}
+function pump() {
+  while (q.busy < 8 && q.want.length) {
+    const url = q.want.shift(); if (tiles.has(url)) continue;
+    const im = new Image(); q.busy++;
+    const done = () => { q.busy--; redraw(); pump(); };
+    im.onload = done; im.onerror = () => { im.bad = true; done(); };
+    im.src = url; tiles.set(url, im);
+  }
+  while (tiles.size > 2500) tiles.delete(tiles.keys().next().value);
+}
+const overs = new WeakMap();
+function overTiles(t) {                       // 8x8 regions per image, for zoomed far out
+  let o = overs.get(t);
+  if (!o) {
+    const m = new Map();
+    for (const [tx, tz, v] of t) { const k = Math.floor(tx / 8) + "," + Math.floor(tz / 8), c = m.get(k); if (!c || v > c[2]) m.set(k, [Math.floor(tx / 8), Math.floor(tz / 8), v]); }
+    o = [...m.values()]; overs.set(t, o);
+  }
+  return o;
 }
 function bounds() {
   const t = info?.dims?.[dim] || [];
@@ -79,14 +110,31 @@ function draw() {
   if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
   x.setTransform(1, 0, 0, 1, 0, 0); x.fillStyle = "#121418"; x.fillRect(0, 0, cv.width, cv.height);
   const k = view.ppb * dpr, ox = (w / 2 - view.x * view.ppb) * dpr, oz = (h / 2 - view.z * view.ppb) * dpr;
-  const lod = view.ppb < 0.3 ? "small" : "full";
+  const lod = view.ppb < 0.1 ? "over" : view.ppb < 0.3 ? "small" : "full";
   x.imageSmoothingEnabled = view.ppb < 1;
-  for (const [tx, tz, v] of info.dims[dim] || []) {
-    const sx = ox + tx * 512 * k, sz = oz + tz * 512 * k, size = 512 * k;
-    if (sx > cv.width || sz > cv.height || sx + size < 0 || sz + size < 0) continue;
-    const im = img(`${base}/tile/${dim}/${lod}/${tx}.${tz}.png?v=${v}`, tiles) || img(`${base}/tile/${dim}/${lod === "full" ? "small" : "full"}/${tx}.${tz}.png?v=${v}`, tiles);
-    if (im) x.drawImage(im, sx, sz, size + 0.5, size + 0.5);
+  q.want = [];
+  const all = info.dims[dim] || [];
+  const visible = (bx, bz, n) => { const sx = ox + bx * n * k, sz = oz + bz * n * k, size = n * k; return !(sx > cv.width || sz > cv.height || sx + size < 0 || sz + size < 0); };
+  if (lod === "over") {
+    const waiting = new Set();
+    for (const [gx, gz, v] of overTiles(all)) {
+      if (!visible(gx, gz, 4096)) continue;
+      const im = img(`${base}/tile/${dim}/over/${gx}.${gz}.png?v=${v}`, tiles);
+      if (im) x.drawImage(im, ox + gx * 4096 * k, oz + gz * 4096 * k, 4096 * k + 0.5, 4096 * k + 0.5); else waiting.add(gx + "," + gz);
+    }
+    if (waiting.size) for (const [tx, tz, v] of all) {
+      if (!waiting.has(Math.floor(tx / 8) + "," + Math.floor(tz / 8))) continue;
+      const im = cached(`${base}/tile/${dim}/small/${tx}.${tz}.png?v=${v}`, tiles);
+      if (im) x.drawImage(im, ox + tx * 512 * k, oz + tz * 512 * k, 512 * k + 0.5, 512 * k + 0.5);
+    }
+  } else {
+    for (const [tx, tz, v] of all) {
+      if (!visible(tx, tz, 512)) continue;
+      const im = img(`${base}/tile/${dim}/${lod}/${tx}.${tz}.png?v=${v}`, tiles) || cached(`${base}/tile/${dim}/${lod === "full" ? "small" : "full"}/${tx}.${tz}.png?v=${v}`, tiles);
+      if (im) x.drawImage(im, ox + tx * 512 * k, oz + tz * 512 * k, 512 * k + 0.5, 512 * k + 0.5);
+    }
   }
+  pump();
   x.setTransform(dpr, 0, 0, dpr, 0, 0);
   const at = (wx, wz) => [w / 2 + (wx - view.x) * view.ppb, h / 2 + (wz - view.z) * view.ppb];
   if (dim === "overworld" && info.spawn) {
@@ -122,7 +170,7 @@ cv.addEventListener("pointermove", (e) => {
   if (view) { const r = cv.getBoundingClientRect(); const wx = view.x + (e.clientX - r.left - r.width / 2) / view.ppb, wz = view.z + (e.clientY - r.top - r.height / 2) / view.ppb;
     document.getElementById("coords").textContent = `${Math.floor(wx)}, ~, ${Math.floor(wz)}`; }
   if (!drag || !view) return;
-  view.x -= (e.clientX - drag.x) / view.ppb; view.z -= (e.clientY - drag.y) / view.ppb; drag = { x: e.clientX, y: e.clientY }; draw();
+  view.x -= (e.clientX - drag.x) / view.ppb; view.z -= (e.clientY - drag.y) / view.ppb; drag = { x: e.clientX, y: e.clientY }; redraw();
 });
 const stop = () => (drag = null); cv.addEventListener("pointerup", stop); cv.addEventListener("pointercancel", stop);
 cv.addEventListener("wheel", (e) => {
@@ -130,7 +178,7 @@ cv.addEventListener("wheel", (e) => {
   const r = cv.getBoundingClientRect(), mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2;
   const wx = view.x + mx / view.ppb, wz = view.z + my / view.ppb;
   view.ppb = Math.min(MAX_PPB, Math.max(view.min, view.ppb * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
-  view.x = wx - mx / view.ppb; view.z = wz - my / view.ppb; draw();
+  view.x = wx - mx / view.ppb; view.z = wz - my / view.ppb; redraw();
 }, { passive: false });
 cv.addEventListener("dblclick", () => { fit(); draw(); });
 cv.addEventListener("keydown", (e) => {
@@ -138,7 +186,7 @@ cv.addEventListener("keydown", (e) => {
   const m = { ArrowLeft: [-s, 0], ArrowRight: [s, 0], ArrowUp: [0, -s], ArrowDown: [0, s] }[e.key];
   if (m) { view.x += m[0]; view.z += m[1]; } else if (e.key === "+" || e.key === "=") view.ppb = Math.min(MAX_PPB, view.ppb * 1.25);
   else if (e.key === "-") view.ppb = Math.max(view.min, view.ppb / 1.25); else return;
-  e.preventDefault(); draw();
+  e.preventDefault(); redraw();
 });
 addEventListener("resize", draw);
 document.getElementById("dim").onchange = (e) => { dim = e.target.value; fit(); draw(); };

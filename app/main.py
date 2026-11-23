@@ -1642,10 +1642,10 @@ async def map_players(sid: str):
 def map_tile(sid: str, dim: str, lod: str, tile: str):
     _get(sid)
     m = re.fullmatch(r"(-?\d+)\.(-?\d+)\.png", tile)
-    if dim not in ("overworld", "nether", "end") or lod not in ("full", "small") or not m:
+    if dim not in ("overworld", "nether", "end") or lod not in ("full", "small", "over") or not m:
         raise HTTPException(404)
-    path = mapper.tile_path(sid, dim, lod, int(m.group(1)), int(m.group(2)))
-    if not os.path.isfile(path):
+    path = mapper.tile_file(sid, dim, lod, int(m.group(1)), int(m.group(2)))
+    if not path:
         raise HTTPException(404)
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
@@ -1909,10 +1909,10 @@ async def public_map_players(token: str):
 def public_map_tile(token: str, dim: str, lod: str, tile: str):
     s = _public_server(token)
     m = re.fullmatch(r"(-?\d+)\.(-?\d+)\.png", tile)
-    if dim not in ("overworld", "nether", "end") or lod not in ("full", "small") or not m:
+    if dim not in ("overworld", "nether", "end") or lod not in ("full", "small", "over") or not m:
         raise HTTPException(404)
-    path = mapper.tile_path(s["id"], dim, lod, int(m.group(1)), int(m.group(2)))
-    if not os.path.isfile(path):
+    path = mapper.tile_file(s["id"], dim, lod, int(m.group(1)), int(m.group(2)))
+    if not path:
         raise HTTPException(404)
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
 

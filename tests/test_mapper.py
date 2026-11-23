@@ -557,3 +557,29 @@ def test_render_a_job_too_big_for_one_argument(world, tmp_path, monkeypatch):
     monkeypatch.setattr(mapper, "legacy_registry", lambda sid: {"blocks": {str(i): "minecraft:stone" for i in range(30000)}, "biomes": {}})
     ok = asyncio.run(mapper.render("aoc", lambda sid: None))
     assert ok and state.get("aoc")["map"]["status"] == "ready", state.get("aoc")["map"]
+
+
+def test_overview_tiles(tmp_path, monkeypatch):
+    """Zoomed out on a big world the browser asked for thousands of region tiles and locked up.
+    Overview tiles put 8x8 regions in one image, built from their small tiles when asked for."""
+    from PIL import Image
+    from app.flatmap import SMALL
+    monkeypatch.setattr(mapper, "map_dir", lambda sid: str(tmp_path / "maps" / sid))
+    sdir = tmp_path / "maps" / "w" / "overworld" / "small"
+    sdir.mkdir(parents=True)
+    Image.new("RGBA", (SMALL, SMALL), (255, 0, 0, 255)).save(sdir / "0.0.png")
+    Image.new("RGBA", (SMALL, SMALL), (0, 0, 255, 255)).save(sdir / "7.7.png")
+    Image.new("RGBA", (SMALL, SMALL), (0, 255, 0, 255)).save(sdir / "-1.0.png")       # the group to the west
+    p = mapper.tile_file("w", "overworld", "over", 0, 0)
+    im = Image.open(p)
+    assert im.size == (8 * SMALL, 8 * SMALL)
+    assert im.getpixel((1, 1)) == (255, 0, 0, 255) and im.getpixel((7 * SMALL + 1, 7 * SMALL + 1)) == (0, 0, 255, 255)
+    assert im.getpixel((SMALL + 1, 1))[3] == 0                                        # no region there
+    assert Image.open(mapper.tile_file("w", "overworld", "over", -1, 0)).getpixel((7 * SMALL + 1, 1)) == (0, 255, 0, 255)
+    built = os.path.getmtime(p)
+    assert mapper.tile_file("w", "overworld", "over", 0, 0) == p and os.path.getmtime(p) == built   # reused
+    time.sleep(0.01)
+    Image.new("RGBA", (SMALL, SMALL), (255, 255, 0, 255)).save(sdir / "0.0.png")        # a region redrawn
+    os.utime(sdir / "0.0.png", (built + 5, built + 5))
+    assert Image.open(mapper.tile_file("w", "overworld", "over", 0, 0)).getpixel((1, 1)) == (255, 255, 0, 255)
+    assert mapper.tile_file("w", "overworld", "over", 5, 5) is None
