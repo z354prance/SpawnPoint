@@ -189,3 +189,19 @@ def test_world_saved_with_a_removed_mod(tmp_path, monkeypatch):
     ex = crashinfo.explain("s", log, mods_dir=mods)
     assert ex["title"] == "The world was saved with a mod that's been removed"
     assert "lithostitched" in ex["detail"] and "Add lithostitched back" in ex["hint"]
+
+
+def test_client_only_mod_needing_sodium(tmp_path, monkeypatch):
+    """Voxy (NeoForge, through Sinytra Connector) in a server's mods folder: it needs Sodium,
+    which only players have. The card said nothing useful."""
+    mods = _server(tmp_path, monkeypatch)
+    (tmp_path / "mods" / "voxy-0.2.15-NeoForge-1.21.1.jar").write_bytes(b"x") if (tmp_path / "mods").exists() else None
+    log = ["[21:08:37] [main/FATAL] [ne.ne.fm.ModLoader/CORE]: Error during pre-loading phase: Some of your mods are incompatible with the game or each other!",
+           "   - Install sodium, version 0.6.13 or later.",
+           "   - mod Voxy (voxy) 0.2.15-NeoForge-1.21.1 requires version 0.6.13 or later of sodium, which is missing!"]
+    ex = crashinfo.explain("s", log, mods_dir=mods)
+    assert ex["title"] == "A client-only mod is on the server"
+    assert "Voxy" in ex["detail"] and "sodium" in ex["detail"] and "player-mods" in ex["hint"] and ex["mod"] == "voxy"
+    log2 = [log[0], "   - mod Create Thing (cthing) 1.0 requires version 6.0 or later of create, which is missing!"]
+    ex2 = crashinfo.explain("s", log2, mods_dir=mods)
+    assert ex2["title"] == "A mod is missing something it needs" and "create 6.0 or later" in ex2["detail"]

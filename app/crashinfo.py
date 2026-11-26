@@ -30,6 +30,11 @@ _FRAME_JAR = re.compile(r"\[([A-Za-z0-9_.+\-]+\.jar)(?:%23\d+)?!")
 _SUSPECT = re.compile(r"Suspected Mods?:\s*(.+)", re.I)
 _MISSING_DEP = re.compile(r"Mod ID: '([^']+)', Requested by: '([^']+)', Expected range: '([^']*)', Actual version: '([^']*)'")
 _FABRIC_REQ = re.compile(r"Mod '([^']+)' \(([^)]+)\) \S+ requires (?:version (.+?) of |any version of )(?:mod )?'?([^',]+)'?")
+# NeoForge's wording: "mod Voxy (voxy) 0.2.15 requires version 0.6.13 or later of sodium, which is missing!"
+_NEO_REQ = re.compile(r"mod (.+?) \(([a-z0-9_.\-]+)\) \S+ requires (?:version (.+?) of |any version of )?([a-z0-9_.\-]+), which is missing")
+# Mods that only exist in players' games: a server mod needing one is itself client-only.
+_CLIENT_ONLY_DEPS = {"sodium", "embeddium", "rubidium", "iris", "oculus", "indium", "modmenu", "reeses_sodium_options",
+                     "sodium_extra", "sodiumextra", "voxy", "distanthorizons", "xaerominimap", "xaeroworldmap", "journeymap"}
 _MIXIN_FAIL = re.compile(r"Mixin apply for mod ([a-z0-9_.\-]+) failed|from mod ([a-z0-9_.\-]+) failed injection|"
                          r"Mixin \[[^\]]+\.json:[^\]]+\] from mod ([a-z0-9_.\-]+)")
 _DUPLICATE = re.compile(r"(?:Found duplicate mods|Duplicate mods? found)[^\n]*", re.I)
@@ -144,6 +149,17 @@ def explain(sid: str, log_lines: list[str], since: float | None = None, mods_dir
             parts.append(f"{by} needs {need} {rng or ''}".rstrip() + f", which {have}")
         return done("A mod is missing something it needs", "; ".join(parts) + ".", deps[0][1],
                     "Add the missing mod (or the right version of it) in the Mods tab, or remove the mod that needs it.")
+    neo = _NEO_REQ.findall(log)
+    if neo:
+        name, mid, ver, dep = neo[0]
+        if dep.lower() in _CLIENT_ONLY_DEPS:
+            return done("A client-only mod is on the server",
+                        f"{name} only runs in players' games: it needs {dep}, which servers don't have.", mid,
+                        f"In the Files tab, move {name}'s file from mods to player-mods. The server stops loading it "
+                        "and players get it with the player pack.")
+        return done("A mod is missing something it needs",
+                    f"{name} needs {dep}" + (f" {ver}" if ver else "") + ", which isn't installed.", mid,
+                    "Add that mod in the Mods tab, or remove the mod that needs it.")
     fab = _FABRIC_REQ.findall(log)
     if fab or "Incompatible mods found" in log or "Incompatible mod set" in log:
         if fab:
