@@ -53,7 +53,7 @@ async def stats_loop():
                         if s["pregen"]["stage"] == "background":
                             entry["mspt"], entry["p95"] = s["pregen"].get("mspt"), s["pregen"].get("p95")
                         else:
-                            t = rcon.parse_tick(await servers.arcmd(s, "tick query"))
+                            t = await servers.tick_time(s)
                             entry["mspt"], entry["p95"] = (t["avg"], t["p95"]) if t else (None, None)
                     except rcon.RconError:
                         pass

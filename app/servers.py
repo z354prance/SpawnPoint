@@ -235,6 +235,36 @@ async def ensure_helpers(s: dict) -> None:
         log.info("[%s] added helpers for %s: %s", sid, loader, ", ".join(added))
 
 
+_TICK_CMD: dict[str, str] = {}             # per server: the command that last gave a tick time
+_TICK_NO_SPARK: set[str] = set()
+
+
+async def tick_time(s: dict) -> dict | None:
+    """Average and 95th-percentile tick time, from whichever command this server answers:
+    the game's 'tick query' (1.20.3+), Forge's/NeoForge's 'forge tps'/'neoforge tps', then
+    'spark tps'. On some servers spark answers into the log after the command has returned,
+    so it gives nothing over RCON and only fills the console: it isn't asked again there."""
+    sid = s["id"]
+    loader = (s.get("loader") or s.get("kind") or "").lower()
+    chain = ["tick query"] + (["neoforge tps", "forge tps"] if loader in ("neoforge", "forge") else []) + ["spark tps"]
+    known = _TICK_CMD.get(sid)
+    if known:
+        chain.remove(known)
+        chain.insert(0, known)
+    for cmd in chain:
+        if cmd == "spark tps" and sid in _TICK_NO_SPARK:
+            continue
+        v = rcon.parse_tick(await arcmd(s, cmd))              # RconError goes to the caller
+        if v is not None:
+            _TICK_CMD[sid] = cmd
+            return v
+        if cmd == "spark tps":
+            _TICK_NO_SPARK.add(sid)
+        if cmd == known:
+            _TICK_CMD.pop(sid, None)
+    return None
+
+
 def set_phase(sid: str, phase: str, msg: str = "") -> None:
     before = (state.get(sid) or {}).get("phase")
     state.update(sid, phase=phase, phase_msg=msg, phase_at=time.time())

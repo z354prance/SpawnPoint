@@ -334,3 +334,36 @@ def test_rcon_is_put_back_on(tmp_path, monkeypatch):
     env = dockerctl.build_env({**state.get("r"), "java_tag": "java21", "memory": {"init_gb": 1, "max_gb": 2},
                                "kind": "fabric", "mc_version": "1.21.1", "props_from_env": True}, 2)
     assert env["SKIP_SERVER_PROPERTIES"] == "false" and env["RCON_PASSWORD"] == "pw123"
+
+
+def test_tick_time_on_forge_1_19(monkeypatch):
+    """Forge 1.19.2 has no 'tick query', and spark answered into the log (nothing over RCON),
+    so the dashboard showed no tick time and pre-gen couldn't see lag, while the console filled
+    with spark output. Forge's own 'forge tps' answers right away."""
+    from app import servers
+    servers._TICK_CMD.clear(); servers._TICK_NO_SPARK.clear()
+    asked = []
+    answers = {"tick query": "Unknown or incomplete command, see below for error",
+               "neoforge tps": "Unknown or incomplete command",
+               "forge tps": "Dim minecraft:overworld (minecraft:overworld): Mean tick time: 9.120 ms. Mean TPS: 20.000\n"
+                            "Overall: Mean tick time: 11.536 ms. Mean TPS: 20.000",
+               "spark tps": ""}
+
+    async def arcmd(s, cmd):
+        asked.append(cmd); return answers[cmd]
+    monkeypatch.setattr(servers, "arcmd", arcmd)
+    s = {"id": "create", "kind": "forge", "loader": "forge"}
+    assert asyncio.run(servers.tick_time(s)) == {"avg": 11.536, "p95": 11.536}
+    assert asked == ["tick query", "neoforge tps", "forge tps"]
+    asked.clear()
+    asyncio.run(servers.tick_time(s))
+    assert asked == ["forge tps"]                                         # remembered
+
+    # a server where only spark could answer, and it answers into the log: asked once, then left alone
+    asked.clear()
+    answers["forge tps"] = "Unknown or incomplete command"
+    v = {"id": "x", "kind": "fabric", "loader": "fabric"}
+    assert asyncio.run(servers.tick_time(v)) is None and asked == ["tick query", "spark tps"]
+    asked.clear()
+    asyncio.run(servers.tick_time(v))
+    assert asked == ["tick query"]

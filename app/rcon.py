@@ -121,6 +121,10 @@ def parse_tick(out: str) -> dict | None:
     m = re.search(r"Tick durations.*?:\s*([\d.]+)/([\d.]+)/([\d.]+)/", out, re.S)
     if m:
         return {"avg": float(m.group(2)), "p95": float(m.group(3))}
+    # Forge / NeoForge: "Overall : Mean tick time: 7.746 ms. Mean TPS: 20.000" (no percentiles)
+    m = re.search(r"Overall\s*:\s*Mean tick time:\s*([\d.]+)\s*ms", out)
+    if m:
+        return {"avg": float(m.group(1)), "p95": float(m.group(1))}
     return None
 
 

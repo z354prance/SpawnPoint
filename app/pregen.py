@@ -70,14 +70,10 @@ async def _map_now(s: dict) -> None:
 
 
 async def _tick(s: dict) -> dict | None:
-    for cmd in ("tick query", "spark tps"):
-        try:
-            v = rcon.parse_tick(await servers.arcmd(s, cmd))
-            if v is not None:
-                return v
-        except rcon.RconError:
-            return None
-    return None
+    try:
+        return await servers.tick_time(s)
+    except rcon.RconError:
+        return None
 
 
 async def _players(s: dict) -> int:
